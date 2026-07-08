@@ -1,0 +1,50 @@
+services:
+  # 1. Servicio de la API (NestJS)
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nest_api
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    environment:
+      - DB_HOST=postgres_db
+      - DB_PORT=5432
+      - DB_USERNAME=nest_user
+      - DB_PASSWORD=nest_password
+      - DB_NAME=nest_database
+      - REDIS_HOST=redis_cache
+      - REDIS_PORT=6379
+    depends_on:
+      - postgres_db
+      - redis_cache
+
+  # 2. Servicio de la Base de Datos (PostgreSQL)
+  postgres_db:
+    image: postgres:16-alpine
+    container_name: postgres_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=nest_user
+      - POSTGRES_PASSWORD=nest_password
+      - POSTGRES_DB=nest_database
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 3. Servicio de Caché / Mensajería (Redis)
+  redis_cache:
+    image: redis:7-alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+# Definimos volúmenes nombrados para que los datos no se borren al apagar los contenedores
+volumes:
+  postgres_data:
+  redis_data:
