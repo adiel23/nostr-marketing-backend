@@ -29,9 +29,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=nest_user
-      - POSTGRES_PASSWORD=nest_password
-      - POSTGRES_DB=nest_database
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=1234
+      - POSTGRES_DB=nostr_marketing
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
