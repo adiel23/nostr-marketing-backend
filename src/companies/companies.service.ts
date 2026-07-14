@@ -32,6 +32,21 @@ export class CompaniesService {
     return this.companiesRepository.save(company);
   }
 
+  async validateCompany(email: string, password: string) {
+    const company = await this.companiesRepository.findOne({ where: { email } });
+
+    if (!company) {
+      return null; // No se encontró la empresa
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, company.passwordHash);
+    if (!isPasswordValid) {
+      return null; // Contraseña incorrecta
+    }
+
+    return company; // Empresa validada correctamente
+  }
+
   findAll() {
     return this.companiesRepository.find(); // Devuelve todas las entidades
   }

@@ -20,15 +20,21 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@getalby/sdk": "^8.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
+    "@nestjs/jwt": "^11.0.2",
     "@nestjs/mapped-types": "*",
+    "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/platform-ws": "^11.1.28",
     "@nestjs/typeorm": "^11.0.3",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "luxon": "^3.7.2",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
     "pg": "^8.22.0",
     "redis": "^5.12.1",
     "reflect-metadata": "^0.2.2",
@@ -45,7 +51,9 @@
     "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
+    "@types/luxon": "^3.7.2",
     "@types/node": "^24.0.0",
+    "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.0.0",
     "@types/ws": "^8.18.1",
     "eslint": "^9.18.0",
@@ -73,6 +81,9 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1"
     },
     "collectCoverageFrom": [
       "**/*.(t|j)s"

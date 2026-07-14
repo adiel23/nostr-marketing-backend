@@ -5,6 +5,10 @@ import { NostrModule } from './nostr/nostr.module';
 import { CompaniesModule } from './companies/companies.module';
 import {TypeOrmModule} from "@nestjs/typeorm";
 import { Company } from './companies/entities/company.entity';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { AuthModule } from './auth/auth.module';
+import { Campaign } from './campaigns/entities/campaign.entity';
+import { CryptoModule } from './crypto/crypto.module';
 
 @Module({
   imports: [NostrModule, CompaniesModule, TypeOrmModule.forRoot({
@@ -14,9 +18,9 @@ import { Company } from './companies/entities/company.entity';
     username: 'root',
     password: '1234',
     database: 'nostr_marketing',
-    entities: [Company],
+    entities: [Company, Campaign],
     synchronize: true, // Set to false in production
-  })],
+  }), CampaignsModule, AuthModule, CryptoModule],
   controllers: [AppController],
   providers: [AppService],
 })

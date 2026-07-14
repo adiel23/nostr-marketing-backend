@@ -1,8 +1,10 @@
+import { Campaign } from 'src/campaigns/entities/campaign.entity';
 import { 
   Entity, 
   PrimaryGeneratedColumn, 
   Column, 
-  CreateDateColumn 
+  CreateDateColumn, 
+  OneToMany
 } from 'typeorm';
 
 @Entity({ name: 'companies' }) // Puedes cambiar 'users' por el nombre real de tu tabla si es diferente
@@ -12,6 +14,9 @@ export class Company {
 
   @Column({ type: 'varchar', nullable: false })
   name!: string;
+
+  @OneToMany(() => Campaign, (campaign) => campaign.company)
+  campaigns!: Campaign[];
 
   @Column({ type: 'varchar', unique: true, nullable: false })
   email!: string;
