@@ -10,14 +10,8 @@ services:
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
-    environment:
-      - DB_HOST=postgres_db
-      - DB_PORT=5432
-      - DB_USERNAME=nest_user
-      - DB_PASSWORD=nest_password
-      - DB_NAME=nest_database
-      - REDIS_HOST=redis_cache
-      - REDIS_PORT=6379
+    env_file:
+      - .env
     depends_on:
       - postgres_db
       - redis_cache
@@ -29,9 +23,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=1234
-      - POSTGRES_DB=nostr_marketing
+      - POSTGRES_USER=${DB_USERNAME}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

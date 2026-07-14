@@ -1,5 +1,5 @@
-# Usamos Node.js 20 sobre una versión ligera de Linux (Alpine)
-FROM node:20-alpine
+# 1. Actualizamos a la versión LTS más reciente (Node.js 24)
+FROM node:24-alpine
 
 # Carpeta de trabajo dentro del contenedor
 WORKDIR /usr/src/app
@@ -16,5 +16,5 @@ COPY . .
 # Exponemos el puerto de NestJS
 EXPOSE 3000
 
-# Comando para ejecutar NestJS en modo desarrollo con auto-recarga (watch)
+# Comando para ejecutar NestJS en modo desarrollo
 CMD ["npm", "run", "start:dev"]
