@@ -29,7 +29,7 @@ El sistema escucha un Relay de Nostr y filtra notas de texto:
 
 Antes de enviar eventos al procesamiento pesado:
 
-1. Se descartan mensajes demasiado cortos: length(content) < 15 caracteres
+1. Se descartan mensajes demasiado cortos o demasiado largos. Menos de 10 caracteres o mas de 1000 caracteres
 2. Se valida contra la base de datos si el usuario (`pubkey`) ya recibió un impacto de esa campaña.
 
 Objetivo:
