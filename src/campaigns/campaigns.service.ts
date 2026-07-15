@@ -71,6 +71,23 @@ export class CampaignsService {
     }
   }
 
+  // NUEVO MÉTODO
+  async findActive(companyId?: string): Promise<Campaign[]> {
+    try {
+      return await this.campaignsRepository.find({
+        where: {
+          status: CampaignStatus.ACTIVE,
+          ...(companyId && { companyId }),
+        },
+        order: {
+          createdAt: 'DESC', 
+        },
+      });
+    } catch (error) {
+      throw new InternalServerErrorException('Error al obtener las campañas activas.');
+    }
+  }
+
   findAll() {
     return `This action returns all campaigns`;
   }
