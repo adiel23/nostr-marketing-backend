@@ -2,11 +2,25 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import WebSocket from 'ws';
 import {CampaignsService} from "src/campaigns/campaigns.service";
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { InjectQueue } from '@nestjs/bullmq'; 
+import { Queue } from 'bullmq'; 
 
 export interface CampaignKeywords {
   id: string;
   name: string;
+  description: string;
   keywords: string[];
+}
+
+export interface CampaignJobData {
+  campaignId: string;
+  campaignName: string;
+  campaignDescription: string;
+  foundKeywords: string[];
+  eventId: string;
+  pubkey: string;
+  content: string;
+  createdAt: number;
 }
 
 @Injectable()
@@ -16,7 +30,8 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
   private readonly relayUrl = 'wss://relay.damus.io'; 
 
   constructor(
-    private campaignsService: CampaignsService // Inyectaremos el servicio de campañas para acceder a la DB
+    private campaignsService: CampaignsService, // Inyectaremos el servicio de campañas para acceder a la DB
+    @InjectQueue('nostr-matches') private nostrQueue: Queue
   ) {}
 
   // --- MEMORIA RAM ---
@@ -42,6 +57,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
       this.activeCampaigns = activeCampaignsFromDB.map(c => ({
         id: c.id,
         name: c.name,
+        description: c.description,
         keywords: c.keywords.map(kw => kw.toLowerCase())
       }));
 
@@ -93,7 +109,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Procesar lo que nos devuelve el Relay
-  private handleRelayMessage(data: WebSocket.Data) {
+  private async handleRelayMessage(data: WebSocket.Data) {
     try {
       const message = JSON.parse(data.toString());
       const messageType = message[0]; // "EVENT", "OK", "EOSE", etc.
@@ -113,34 +129,60 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
         console.log(`Contenido: ${content}`);
 
         // 2. Buscar coincidencias con las campañas en memoria RAM
-        this.findCampaignMatches(event, content);
+        await this.findCampaignMatches(event, content);
       }
     } catch (e) {
       console.error('Error al parsear mensaje del relay', e);
     }
   }
 
-  // --- ALGORITMO DE MATCHING ---
-  private findCampaignMatches(event: any, content: string) {
-    // Normalizamos el contenido del mensaje a minúsculas para una comparación insensible a mayúsculas
+  // 1. EL ALGORITMO DE MATCHING (Limpio y con responsabilidad única)
+  private async findCampaignMatches(event: any, content: string) {
     const lowerCaseContent = content.toLowerCase();
+    const matchesToEnqueue: Promise<any>[] = [];
 
-    // Recorremos las campañas en RAM
     for (const campaign of this.activeCampaigns) {
-      // Filtramos las keywords de esta campaña que están presentes en el texto
       const foundKeywords = campaign.keywords.filter(keyword => 
         lowerCaseContent.includes(keyword)
       );
 
-      // Si encontramos al menos una keyword, procesamos el match para esta campaña
       if (foundKeywords.length > 0) {
-        console.log(`\n[Match Encontrado] Campaña: ${campaign.name} (ID: ${campaign.id})`);
-        console.log(`Keywords encontradas: ${foundKeywords.join(', ')}`);
-        console.log(`Evento ID: ${event.id}`);
-        console.log(`Publicador: ${event.pubkey.substring(0, 8)}...`);
-        console.log(`Contenido del evento: ${content}`);
+        // En lugar de disparar y olvidar, acumulamos las promesas
+        const jobPromise = this.enqueueMatch(campaign, event, content, foundKeywords);
+        matchesToEnqueue.push(jobPromise);
       }
     }
+
+    // Procesamos todos los envíos a la cola en paralelo de forma segura
+    if (matchesToEnqueue.length > 0) {
+      try {
+        await Promise.all(matchesToEnqueue);
+        console.log(`[Éxito] ${matchesToEnqueue.length} matches enviados a BullMQ.`);
+      } catch (error) {
+        console.error('Error crítico: No se pudieron encolar algunos matches en Redis', error);
+      }
+    }
+  }
+
+  // 2. NUEVA FUNCIÓN ESPECIALIZADA (Responsabilidad Única)
+  private async enqueueMatch(campaign: CampaignKeywords, event: any, content: string, foundKeywords: string[]) {
+    console.log(`[Match Encontrado] Encolando para campaña: ${campaign.name}`);
+    
+    const jobData: CampaignJobData = {
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      campaignDescription: campaign.description,
+      foundKeywords,
+      eventId: event.id,
+      pubkey: event.pubkey,
+      content,
+      createdAt: event.created_at
+    };
+
+    return this.nostrQueue.add('procesar-match', jobData, {
+      attempts: 3,
+      backoff: 5000
+    });
   }
 
   // Método para publicar tus propias notas desde cualquier parte de tu app
