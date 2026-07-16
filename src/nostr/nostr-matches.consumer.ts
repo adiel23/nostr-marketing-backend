@@ -1,36 +1,46 @@
-// nostr-matches.consumer.ts
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
+import { LlmService } from 'src/llm/llm.service';
 import { CampaignJobData } from './nostr.service';
 
-@Processor('nostr-matches') // Debe coincidir con el nombre de la cola registrado
+@Processor('nostr-matches')
 export class NostrMatchesConsumer extends WorkerHost {
-  
-  // Este método se ejecutará asíncronamente en el fondo por cada elemento en la cola
+  constructor(private readonly llmService: LlmService) {
+    super();
+  }
+
   async process(job: Job<CampaignJobData, any, string>): Promise<any> {
-    const { campaignName, foundKeywords, eventId } = job.data;
+    const { campaignName, campaignDescription, content, eventId, pubkey, productDescription } = job.data;
 
     console.log(`\n[Worker] Procesando trabajo #${job.id}`);
-    console.log(`[Worker] Ejecutando acción pesada para la campaña: ${campaignName}`);
-    console.log(`[Worker] Keywords gatilladas: ${foundKeywords.join(', ')}`);
+    console.log(`[Worker] Ejecutando evaluación LLM para la campaña: ${campaignName}`);
 
     try {
-      // -------------------------------------------------------------
-      // AQUÍ VA TU LÓGICA DE NEGOCIO REAL:
-      // Ej: await this.metricsService.saveMatch(job.data);
-      // Ej: await this.notificationsService.sendAlert(job.data);
-      // -------------------------------------------------------------
-      
-      // Simulamos un retraso de procesamiento pesado (ej. guardar en DB o llamar API)
-      await new Promise(resolve => setTimeout(resolve, 1000)); 
+      const evaluation = await this.llmService.evaluateIntent({
+        postContent: content,
+        campaignDescription,
+        productDescription,
+      });
 
-      console.log(`[Worker] Trabajo #${job.id} completado con éxito.`);
-      return { status: 'success', eventId };
+      console.log(`[Worker] Evaluación LLM para ${pubkey}: ${evaluation.match ? 'MATCH' : 'NO MATCH'}`);
+      console.log(`[Worker] Razón: ${evaluation.reason}`);
 
+      if (!evaluation.match) {
+        return {
+          status: 'skipped',
+          eventId,
+          reason: evaluation.reason,
+        };
+      }
+
+      return {
+        status: 'success',
+        eventId,
+        evaluation,
+      };
     } catch (error) {
       console.error(`[Worker] Error procesando el trabajo ${job.id}:`, error);
-      // Lanzar el error le dice a BullMQ que la tarea falló para que aplique los reintentos
-      throw error; 
+      throw error;
     }
   }
 }

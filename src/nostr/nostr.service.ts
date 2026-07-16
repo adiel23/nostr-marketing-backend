@@ -16,6 +16,7 @@ export interface CampaignJobData {
   campaignId: string;
   campaignName: string;
   campaignDescription: string;
+  productDescription?: string;
   foundKeywords: string[];
   eventId: string;
   pubkey: string;
@@ -167,11 +168,12 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
   // 2. NUEVA FUNCIÓN ESPECIALIZADA (Responsabilidad Única)
   private async enqueueMatch(campaign: CampaignKeywords, event: any, content: string, foundKeywords: string[]) {
     console.log(`[Match Encontrado] Encolando para campaña: ${campaign.name}`);
-    
+
     const jobData: CampaignJobData = {
       campaignId: campaign.id,
       campaignName: campaign.name,
       campaignDescription: campaign.description,
+      productDescription: campaign.description,
       foundKeywords,
       eventId: event.id,
       pubkey: event.pubkey,

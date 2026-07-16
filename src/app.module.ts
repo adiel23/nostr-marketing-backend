@@ -10,12 +10,20 @@ import { AuthModule } from './auth/auth.module';
 import { Campaign } from './campaigns/entities/campaign.entity';
 import { CryptoModule } from './crypto/crypto.module';
 import {ScheduleModule} from "@nestjs/schedule";
+import { LlmModule } from './llm/llm.module';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { ExpressAdapter } from '@bull-board/express';
 
 @Module({
   imports: [
     NostrModule, 
     CompaniesModule, 
     ScheduleModule.forRoot(),
+    // Configuración global de la interfaz web de colas
+    BullBoardModule.forRoot({
+      route: '/queues',             // URL donde abrirás el panel
+      adapter: ExpressAdapter,
+    }),
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: 'postgres_db',
@@ -28,7 +36,8 @@ import {ScheduleModule} from "@nestjs/schedule";
     }),
     CampaignsModule,
     AuthModule,
-    CryptoModule],
+    CryptoModule,
+    LlmModule],
   controllers: [AppController],
   providers: [AppService],
 })
