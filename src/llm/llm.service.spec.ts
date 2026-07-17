@@ -43,7 +43,7 @@ describe('LlmService', () => {
 
     const result = await service.evaluateIntent({
       postContent: 'Estoy buscando una wallet Bitcoin segura',
-      campaignDescription: 'Promoción de wallet Bitcoin',
+      campaignName: 'Wallet Bitcoin',
       productDescription: 'Wallet Bitcoin segura para almacenar sats',
     });
 
@@ -73,7 +73,8 @@ describe('LlmService', () => {
 
     const result = await service.evaluateIntent({
       postContent: 'hola',
-      campaignDescription: 'campaña',
+      campaignName: 'campaña',
+      productDescription: 'producto',
     });
 
     expect(result.match).toBe(false);

@@ -45,7 +45,6 @@ describe('CampaignsService', () => {
   it('should reject campaigns whose end date is not after the creation date', async () => {
     const dto = {
       name: 'Test campaign',
-      description: 'desc',
       keywords: ['a'],
       nwcUrl: 'nostr+walletconnect://test',
       satsPerImpact: 10,

@@ -4,7 +4,6 @@ import { OpenRouter } from '@openrouter/sdk';
 export interface EvaluateIntentInput {
   postContent: string;
   campaignName: string;
-  campaignDescription: string;
   productDescription: string;
 }
 
@@ -48,9 +47,6 @@ ${input.postContent}
 
 Nombre de la campaña:
 ${input.campaignName}
-
-Contexto de la campaña:
-${input.campaignDescription}
 
 Descripción del producto:
 ${input.productDescription}

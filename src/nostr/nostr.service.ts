@@ -8,7 +8,6 @@ import { Queue } from 'bullmq';
 export interface CampaignKeywords {
   id: string;
   name: string;
-  description: string;
   productDescription: string;
   keywords: string[];
 }
@@ -16,7 +15,6 @@ export interface CampaignKeywords {
 export interface CampaignJobData {
   campaignId: string;
   campaignName: string;
-  campaignDescription: string;
   productDescription: string;
   foundKeywords: string[];
   eventId: string;
@@ -59,7 +57,6 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
       this.activeCampaigns = activeCampaignsFromDB.map(c => ({
         id: c.id,
         name: c.name,
-        description: c.description,
         productDescription: c.productDescription,
         keywords: c.keywords.map(kw => kw.toLowerCase())
       }));
@@ -174,7 +171,6 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
     const jobData: CampaignJobData = {
       campaignId: campaign.id,
       campaignName: campaign.name,
-      campaignDescription: campaign.description,
       productDescription: campaign.productDescription,
       foundKeywords,
       eventId: event.id,

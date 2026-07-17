@@ -53,7 +53,6 @@ export class CampaignsService {
       const newCampaign = this.campaignsRepository.create({
         companyId,
         name: createCampaignDto.name,
-        description: createCampaignDto.description,
         productDescription: createCampaignDto.productDescription,
         keywords: createCampaignDto.keywords,
         nwcUrlEncrypted: encryptedNwcUrl, // Guardamos la URL cifrada

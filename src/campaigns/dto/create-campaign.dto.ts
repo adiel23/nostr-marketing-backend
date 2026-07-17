@@ -14,10 +14,6 @@ export class CreateCampaignDto {
 
   @IsString()
   @IsNotEmpty()
-  description!: string;
-
-  @IsString()
-  @IsNotEmpty()
   productDescription!: string;
 
   @IsArray()

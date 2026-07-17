@@ -33,9 +33,6 @@ export class Campaign {
   @Column({ type: 'varchar' })
   name!: string;
 
-  @Column({ type: 'text' })
-  description!: string;
-
   @Column({ type: 'text'})
   productDescription!: string;
 
