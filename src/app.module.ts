@@ -8,6 +8,7 @@ import { Company } from './companies/entities/company.entity';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { AuthModule } from './auth/auth.module';
 import { Campaign } from './campaigns/entities/campaign.entity';
+import { Impact } from './impacts/entities/impact.entity';
 import { CryptoModule } from './crypto/crypto.module';
 import {ScheduleModule} from "@nestjs/schedule";
 import { LlmModule } from './llm/llm.module';
@@ -31,7 +32,7 @@ import { ExpressAdapter } from '@bull-board/express';
       username: 'root',
       password: '1234',
       database: 'nostr_marketing',
-      entities: [Company, Campaign],
+      entities: [Company, Campaign, Impact],
       synchronize: false, 
       migrations: [__dirname + '/migrations/*{.ts,.js}'], // 2. Dónde buscará Nest las migraciones al arrancar
       migrationsRun: true, // 3. Opcional: Hace que Nest corra las migraciones pendientes automáticamente al iniciar la ap
