@@ -2,10 +2,14 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { LlmService } from 'src/llm/llm.service';
 import { CampaignJobData } from './nostr.service';
+import { ImpactExecutionService } from './impact-execution.service';
 
 @Processor('nostr-matches')
 export class NostrMatchesConsumer extends WorkerHost {
-  constructor(private readonly llmService: LlmService) {
+  constructor(
+    private readonly llmService: LlmService,
+    private readonly impactExecutionService: ImpactExecutionService,
+  ) {
     super();
   }
 
@@ -33,10 +37,18 @@ export class NostrMatchesConsumer extends WorkerHost {
         };
       }
 
+      console.log(`[Worker] LLM aprobó el impacto. Ejecutando flujo atómico...`);
+      const impactResult = await this.impactExecutionService.executeApprovedImpact(job.data);
+
+      console.log(
+        `[Worker] Impacto registrado (${impactResult.status}). Comment: ${impactResult.commentEventId}`,
+      );
+
       return {
         status: 'success',
         eventId,
         evaluation,
+        impact: impactResult,
       };
     } catch (error) {
       console.error(`[Worker] Error procesando el trabajo ${job.id}:`, error);

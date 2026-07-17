@@ -92,6 +92,10 @@ export class CampaignsService {
     return `This action returns all campaigns`;
   }
 
+  async findById(id: string): Promise<Campaign | null> {
+    return this.campaignsRepository.findOne({ where: { id } });
+  }
+
   findOne(id: number) {
     return `This action returns a #${id} campaign`;
   }

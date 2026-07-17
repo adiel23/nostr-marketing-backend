@@ -6,11 +6,17 @@ import { NostrMatchesConsumer } from './nostr-matches.consumer';
 import { LlmModule } from 'src/llm/llm.module';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { NostrPublisher } from './nostr.publisher';
+import { ImpactExecutionService } from './impact-execution.service';
+import { ImpactsModule } from 'src/impacts/impacts.module';
+import { WalletModule } from 'src/wallet/wallet.module';
 
 @Module({
     imports: [
         CampaignsModule,
         LlmModule,
+        ImpactsModule,
+        WalletModule,
         BullModule.forRoot({
         connection: {
             host: 'redis_cache',
@@ -20,13 +26,12 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
         BullModule.registerQueue({
         name: 'nostr-matches',
         }),
-        // NUEVO: Vincula la cola de este módulo al Bull Board global
         BullBoardModule.forFeature({
         name: 'nostr-matches',
         adapter: BullMQAdapter, 
         }),
     ],
-    providers: [NostrService, NostrMatchesConsumer]
+    providers: [NostrService, NostrPublisher, ImpactExecutionService, NostrMatchesConsumer]
 })
 export class NostrModule {}
 
