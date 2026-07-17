@@ -3,8 +3,9 @@ import { OpenRouter } from '@openrouter/sdk';
 
 export interface EvaluateIntentInput {
   postContent: string;
+  campaignName: string;
   campaignDescription: string;
-  productDescription?: string;
+  productDescription: string;
 }
 
 export interface EvaluateIntentResult {
@@ -33,28 +34,26 @@ export class LlmService {
     const prompt = `
 Eres un clasificador de intención comercial para publicidad en Nostr.
 
-Tu tarea es decidir si el usuario que escribió el post está mostrando un interés real en un producto o servicio relacionado con lo que la empresa está promocionando en la campaña.
+Tu tarea es decidir si el usuario que escribió el post está mostrando un interés en un producto o servicio relacionado con lo que la empresa está promocionando en la campaña o si el producto o servicio que ofrece la empresa podría resolver el/los problema/s que el usuario está describiendo.
 
 Devuelve SOLO un JSON con este formato:
 {
   "match": true o false,
-  "reason": "explicación breve",
+  "reason": "explicación breve de por qué es un match o no",
   "confidence": un número entre 0 y 1 que indique la confianza de tu decisión
 }
 
-Reglas:
-- MATCH si el usuario expresa interés real en el producto, o describe un problema que podría resolverse con el producto.
-- NO MATCH si el post es irrelevante, no expresa intención real o no está relacionado con el producto.
-- Prioriza intención real sobre simple mención.
-
 Post del usuario:
 ${input.postContent}
+
+Nombre de la campaña:
+${input.campaignName}
 
 Contexto de la campaña:
 ${input.campaignDescription}
 
 Descripción del producto:
-${input.productDescription ?? input.campaignDescription}
+${input.productDescription}
 `;
 
     const client = new OpenRouter({

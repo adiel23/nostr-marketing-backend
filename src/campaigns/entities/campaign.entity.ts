@@ -36,6 +36,9 @@ export class Campaign {
   @Column({ type: 'text' })
   description!: string;
 
+  @Column({ type: 'text'})
+  productDescription!: string;
+
   @Column({ type: 'text', array: true })
   keywords!: string[];
 

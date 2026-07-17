@@ -10,7 +10,7 @@ export class NostrMatchesConsumer extends WorkerHost {
   }
 
   async process(job: Job<CampaignJobData, any, string>): Promise<any> {
-    const { campaignName, campaignDescription, content, eventId, pubkey, productDescription } = job.data;
+    const { campaignName, campaignDescription, productDescription, content, eventId, pubkey } = job.data;
 
     console.log(`\n[Worker] Procesando trabajo #${job.id}`);
     console.log(`[Worker] Ejecutando evaluación LLM para la campaña: ${campaignName}`);
@@ -18,6 +18,7 @@ export class NostrMatchesConsumer extends WorkerHost {
     try {
       const evaluation = await this.llmService.evaluateIntent({
         postContent: content,
+        campaignName,
         campaignDescription,
         productDescription,
       });

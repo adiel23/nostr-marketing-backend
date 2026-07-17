@@ -54,6 +54,7 @@ export class CampaignsService {
         companyId,
         name: createCampaignDto.name,
         description: createCampaignDto.description,
+        productDescription: createCampaignDto.productDescription,
         keywords: createCampaignDto.keywords,
         nwcUrlEncrypted: encryptedNwcUrl, // Guardamos la URL cifrada
         satsPerImpact: createCampaignDto.satsPerImpact,

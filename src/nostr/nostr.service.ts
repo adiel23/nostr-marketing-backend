@@ -9,6 +9,7 @@ export interface CampaignKeywords {
   id: string;
   name: string;
   description: string;
+  productDescription: string;
   keywords: string[];
 }
 
@@ -16,7 +17,7 @@ export interface CampaignJobData {
   campaignId: string;
   campaignName: string;
   campaignDescription: string;
-  productDescription?: string;
+  productDescription: string;
   foundKeywords: string[];
   eventId: string;
   pubkey: string;
@@ -59,6 +60,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
         id: c.id,
         name: c.name,
         description: c.description,
+        productDescription: c.productDescription,
         keywords: c.keywords.map(kw => kw.toLowerCase())
       }));
 
@@ -173,7 +175,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
       campaignId: campaign.id,
       campaignName: campaign.name,
       campaignDescription: campaign.description,
-      productDescription: campaign.description,
+      productDescription: campaign.productDescription,
       foundKeywords,
       eventId: event.id,
       pubkey: event.pubkey,
