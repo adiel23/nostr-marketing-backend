@@ -32,7 +32,9 @@ import { ExpressAdapter } from '@bull-board/express';
       password: '1234',
       database: 'nostr_marketing',
       entities: [Company, Campaign],
-      synchronize: true, // Set to false in production
+      synchronize: false, 
+      migrations: [__dirname + '/migrations/*{.ts,.js}'], // 2. Dónde buscará Nest las migraciones al arrancar
+      migrationsRun: true, // 3. Opcional: Hace que Nest corra las migraciones pendientes automáticamente al iniciar la ap
     }),
     CampaignsModule,
     AuthModule,
