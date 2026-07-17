@@ -26,8 +26,7 @@ export interface CampaignJobData {
 @Injectable()
 export class NostrService implements OnModuleInit, OnModuleDestroy {
   private ws!: WebSocket;
-  // Usamos un relay público conocido para pruebas
-  private readonly relayUrl = 'wss://relay.damus.io'; 
+  private readonly relayUrl = process.env.NOSTR_RELAY_URL ?? 'wss://relay.damus.io';
 
   constructor(
     private campaignsService: CampaignsService, // Inyectaremos el servicio de campañas para acceder a la DB
