@@ -4,6 +4,7 @@ import {CampaignsService} from "src/campaigns/campaigns.service";
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq'; 
 import { Queue } from 'bullmq'; 
+import { getPlatformPublicKey } from './nostr-keys.util';
 
 export interface CampaignKeywords {
   id: string;
@@ -121,6 +122,11 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
         if (content.length < 10 || content.length > 1000) {
           // Opcional: puedes descomentar la siguiente línea si quieres ver en consola qué se está filtrando
           console.log(`[Filtro] Mensaje omitido por longitud (${content.length} caracteres).`);
+          return; 
+        }
+
+        if (event.pubkey === getPlatformPublicKey()) {
+          console.log(`[Filtro] Mensaje omitido: proviene de nuestra propia pubkey.`);
           return; 
         }
 
