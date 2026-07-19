@@ -125,7 +125,12 @@ describe('AppController (e2e)', () => {
 
   beforeAll(async () => {
     mockPublishComment.mockResolvedValue({ eventId: 'e2e-comment' });
-    mockSendZap.mockResolvedValue({ success: true, feesPaid: 1 });
+    mockSendZap.mockResolvedValue({
+      success: true,
+      feesPaid: 1,
+      preimage: 'e2e-preimage',
+      receiptVerified: true,
+    });
     mockEvaluateIntent.mockResolvedValue({
       match: true,
       reason: 'InterÃ©s comercial confirmado por el simulador E2E.',
@@ -196,12 +201,30 @@ describe('AppController (e2e)', () => {
         name: 'Wallet E2E',
         productDescription: 'Una wallet para pagos Lightning seguros.',
         keywords: [matchKeyword],
-        nwcUrl: 'nostr+walletconnect://e2e.invalid',
+        nwcUrl: 'nostr+walletconnect://e2e.invalid?relay=wss://93.184.216.34',
         satsPerImpact: 100,
+        budgetSats: 1000,
         endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       })
       .expect(201);
     const campaignId = getRequiredString(campaignResponse.body, 'id');
+    expect(campaignResponse.body).not.toHaveProperty('nwcUrlEncrypted');
+
+    const listResponse = await request(app.getHttpServer())
+      .get('/campaigns')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    const listBody = listResponse.body as Record<string, unknown>[];
+    expect(listBody.length).toBeGreaterThan(0);
+    for (const item of listBody) {
+      expect(item).not.toHaveProperty('nwcUrlEncrypted');
+    }
+
+    const getOneResponse = await request(app.getHttpServer())
+      .get(`/campaigns/${campaignId}`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(getOneResponse.body).not.toHaveProperty('nwcUrlEncrypted');
 
     await nostrService.handleKeywordsSinking();
 

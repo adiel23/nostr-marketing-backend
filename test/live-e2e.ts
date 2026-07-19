@@ -10,10 +10,12 @@ import {
   generateSecretKey,
   finalizeEvent,
   getPublicKey,
+  verifyEvent,
 } from 'nostr-tools/pure';
 import { SimplePool } from 'nostr-tools/pool';
 import { DataSource } from 'typeorm';
 import WebSocket, { type RawData, WebSocketServer } from 'ws';
+import { NOSTR_KIND_ZAP_RECEIPT } from 'src/nostr/nostr.constants';
 
 interface NostrEvent {
   id: string;
@@ -36,6 +38,9 @@ interface ImpactRow {
   status: string;
   sats_charged: number;
   platform_fee: number;
+  bolt11: string | null;
+  payment_hash: string | null;
+  preimage: string | null;
 }
 
 const RELAY_PORT = 48195;
@@ -75,6 +80,22 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} debe estar configurada para la prueba live E2E.`);
   }
   return value;
+}
+
+function assertTestDatabase(): void {
+  const dbName = process.env.DB_NAME ?? '';
+  const looksLikeTestDb = /(^|[_-])(test|live[_-]?e2e)([_-]|$)/i.test(dbName);
+  const explicitlyAllowed =
+    !!dbName && process.env.LIVE_E2E_ALLOW_DB === dbName;
+
+  if (!looksLikeTestDb && !explicitlyAllowed) {
+    throw new Error(
+      `DB_NAME="${dbName}" no parece una base de datos de pruebas. ` +
+        'Live E2E crea y borra datos reales: use un nombre que contenga ' +
+        '"test" o "live_e2e", o confirme explicitamente con ' +
+        `LIVE_E2E_ALLOW_DB=${dbName || '<nombre-exacto>'}.`,
+    );
+  }
 }
 
 function getTestPosterSecretKey(): Uint8Array {
@@ -227,6 +248,53 @@ async function waitForPublicComment(
   }
 
   throw new Error('El comentario no aparecio en el relay publico.');
+}
+
+/**
+ * Confirmacion independiente del recibo NIP-57 publicado por el receptor.
+ * La aplicacion ya valida el recibo internamente; este chequeo de caja negra
+ * prueba que el artefacto publico concuerda con la invoice persistida.
+ */
+async function waitForPublicZapReceipt(
+  relayUrl: string,
+  targetEventId: string,
+  targetPubkey: string,
+  bolt11: string,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+
+  while (Date.now() < deadline) {
+    const pool = new SimplePool();
+    try {
+      const receipts = await pool.querySync(
+        [relayUrl],
+        {
+          kinds: [NOSTR_KIND_ZAP_RECEIPT],
+          '#e': [targetEventId],
+          '#p': [targetPubkey],
+          limit: 20,
+        },
+        { maxWait: 5_000 },
+      );
+      const receipt = receipts.find(
+        (event) =>
+          verifyEvent(event) &&
+          event.tags.some(
+            (tag) => tag[0] === 'e' && tag[1] === targetEventId,
+          ) &&
+          event.tags.some((tag) => tag[0] === 'p' && tag[1] === targetPubkey) &&
+          event.tags.some((tag) => tag[0] === 'bolt11' && tag[1] === bolt11),
+      );
+      if (receipt) return;
+    } finally {
+      pool.close([relayUrl]);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(
+    'El recibo NIP-57 no aparecio o no valido en el relay publico.',
+  );
 }
 
 function matchesFilter(event: NostrEvent, filter: RelayFilter): boolean {
@@ -484,7 +552,7 @@ async function waitForImpact(
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const rows = await dataSource.query<ImpactRow[]>(
-      `SELECT status, sats_charged, platform_fee
+      `SELECT status, sats_charged, platform_fee, bolt11, payment_hash, preimage
        FROM impacts
        WHERE campaign_id = $1 AND target_event_id = $2`,
       [campaignId, eventId],
@@ -507,6 +575,7 @@ async function waitForJob(queue: Queue, jobId: string): Promise<Job | null> {
 
 async function main(): Promise<void> {
   dotenv.config({ path: process.env.LIVE_E2E_ENV_FILE ?? '.env' });
+  assertTestDatabase();
 
   const useFreshDemoWallets =
     process.env.LIVE_E2E_CREATE_DEMO_WALLETS === 'true';
@@ -563,6 +632,9 @@ async function main(): Promise<void> {
 
   const relay = new ControlledRelay();
   let app: INestApplication | undefined;
+  let dataSource: DataSource | undefined;
+  let companyId: string | undefined;
+  let campaignId: string | undefined;
 
   try {
     await relay.start();
@@ -584,7 +656,9 @@ async function main(): Promise<void> {
     await app.listen(0, '127.0.0.1');
     logStage('api', `started on ${await app.getUrl()}`);
 
-    const dataSource = app.get(DataSource);
+    dataSource = app.get(DataSource);
+    const db = dataSource;
+    if (!db) throw new Error('No se pudo obtener el DataSource de la app.');
     const nostrService = app.get<NostrServiceLike>(NostrService);
     const nostrQueue = app.get<Queue>(getQueueToken('nostr-matches'));
     await relay.waitForSubscription();
@@ -602,7 +676,8 @@ async function main(): Promise<void> {
         password: 'live-e2e-password',
       },
     );
-    logStage('company', `created id=${getString(company, 'id')}`);
+    companyId = getString(company, 'id');
+    logStage('company', `created id=${companyId}`);
     const login = await requestJson<unknown>(
       await app.getUrl(),
       '/auth/login',
@@ -622,12 +697,13 @@ async function main(): Promise<void> {
         keywords: [keyword],
         nwcUrl,
         satsPerImpact: maxSats,
+        budgetSats: Math.ceil(maxSats * 1.1),
         endsAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       },
       accessToken,
       useFreshDemoWallets ? 3 : 1,
     );
-    const campaignId = getString(campaign, 'id');
+    campaignId = getString(campaign, 'id');
     logStage(
       'campaign',
       `created id=${campaignId} keyword=${keyword} sats_per_impact=${maxSats}`,
@@ -725,7 +801,7 @@ async function main(): Promise<void> {
     ]);
     logStage('nostr-event', `published kind=1 id=${note.id}`);
 
-    const impact = await waitForImpact(dataSource, campaignId, note.id);
+    const impact = await waitForImpact(db, campaignId, note.id);
     const jobId = `${campaignId}:${note.id}:match`;
     const job = await waitForJob(nostrQueue, jobId);
     const jobState = job ? await job.getState() : 'missing';
@@ -747,6 +823,12 @@ async function main(): Promise<void> {
       throw new Error('La comision de wallet excedio el limite autorizado.');
     }
 
+    if (!impact.bolt11 || !impact.payment_hash || !impact.preimage) {
+      throw new Error(
+        'El impacto completo no conservo la invoice, hash y preimage del pago.',
+      );
+    }
+
     const commentEventId = jobResult?.impact?.commentEventId;
     if (!commentEventId) {
       throw new Error('El worker no devolvio el identificador del comentario.');
@@ -757,8 +839,14 @@ async function main(): Promise<void> {
       note.id,
       requiredEnvironment('PLATFORM_NPUB'),
     );
+    await waitForPublicZapReceipt(
+      publicRelayUrl,
+      note.id,
+      recipientPubkey,
+      impact.bolt11,
+    );
 
-    const rows = await dataSource.query<{ count: string }[]>(
+    const rows = await db.query<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count
        FROM impacts
        WHERE campaign_id = $1 AND target_event_id = $2`,
@@ -776,7 +864,34 @@ async function main(): Promise<void> {
     console.log(`LIVE_E2E_PAYMENT_SATS=${maxSats}`);
     console.log(`LIVE_E2E_WALLET_FEE_SATS=${walletFeeSats}`);
     console.log('LIVE_E2E_COMMENT_PUBLISHED=true');
+    console.log('LIVE_E2E_RECEIPT_VERIFIED=true');
   } finally {
+    if (dataSource && (campaignId || companyId)) {
+      try {
+        if (campaignId) {
+          await dataSource.query('DELETE FROM impacts WHERE campaign_id = $1', [
+            campaignId,
+          ]);
+          await dataSource.query('DELETE FROM campaigns WHERE id = $1', [
+            campaignId,
+          ]);
+        }
+        if (companyId) {
+          await dataSource.query('DELETE FROM companies WHERE id = $1', [
+            companyId,
+          ]);
+        }
+        logStage(
+          'cleanup',
+          `removed company=${companyId ?? 'n/a'} campaign=${campaignId ?? 'n/a'}`,
+        );
+      } catch (error) {
+        console.error(
+          'No se pudieron limpiar los datos de la prueba live E2E:',
+          error,
+        );
+      }
+    }
     await app?.close();
     await relay.close();
   }
