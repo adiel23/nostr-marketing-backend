@@ -1,98 +1,216 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Nostr Marketing Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend de campañas promocionales para Nostr, construido con NestJS y TypeScript. Las empresas crean campañas asociadas a una wallet mediante Nostr Wallet Connect (NWC); el servicio escucha notas públicas, detecta coincidencias, las evalúa y, cuando corresponden, publica una respuesta promocional y envía un zap.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Capacidades actuales
 
-## Description
+- Registro de empresas e inicio de sesión con JWT.
+- Creación y administración de campañas propias: consulta, edición, pausa, reanudación y cancelación.
+- Validación de saldo de la wallet NWC y cifrado AES-256 de su URL antes de persistirla.
+- Duración máxima de 30 días; una tarea programada marca como `completed` las campañas vencidas.
+- Conexión a un relay Nostr, filtrado por palabras clave y cola BullMQ respaldada por Redis.
+- Evaluación de intención con OpenRouter. Si `OPENROUTER_API_KEY` no está configurada, se usa un resultado seguro sin coincidencia.
+- Comentario promocional, zap LNURL/NWC y registro del impacto con su estado, costo y comisión de plataforma.
+- Bull Board se encuentra deshabilitado por defecto; puede habilitarse de forma explícita y autenticada para observar `nostr-matches`.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Arquitectura
 
-## Project setup
+1. La API NestJS guarda empresas, campañas e impactos en PostgreSQL mediante TypeORM.
+2. `NostrService` mantiene la suscripción al relay y refresca cada minuto la caché de campañas activas.
+3. Las coincidencias se encolan en Redis/BullMQ; el consumidor usa el LLM para decidir si hay interés comercial.
+4. Un impacto aprobado verifica de nuevo que la campaña esté activa, publica la nota, intenta el zap y guarda el resultado.
 
-```bash
-$ npm install
+Las URLs NWC se almacenan cifradas, pero la aplicación procesa credenciales de pago y publica en Nostr. Proteja la infraestructura y los logs. Bull Board devuelve `404` mientras está deshabilitado y requiere autenticación HTTP Basic cuando se habilita.
+
+## Requisitos
+
+- Node.js 24 (la imagen Docker usa `node:24-alpine`).
+- npm.
+- PostgreSQL 16 y Redis 7 para ejecución local, o Docker Compose para levantar ambos servicios.
+- Una identidad Nostr de plataforma (`PLATFORM_NSEC` y `PLATFORM_NPUB`) y un relay accesible para operar el listener.
+- Una URL NWC válida con saldo para crear campañas. `OPENROUTER_API_KEY` es opcional, pero sin ella ningún match será aprobado.
+
+## Configuración
+
+Copie el ejemplo y complete las variables en un archivo local, que no debe versionarse:
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-## Compile and run the project
+En macOS/Linux:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+cp .env.example .env
 ```
 
-## Run tests
+`.env.example` contiene solo nombres, valores de desarrollo y marcadores; reemplace los valores locales antes de desplegar. Nunca pegue una NSEC, una URL NWC, una clave de OpenRouter ni una clave AES en el README, el control de versiones o los logs.
+
+| Variable                                                      | Uso                                                                                                                                                            |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                                                        | Puerto HTTP de la API (por defecto `3000`).                                                                                                                    |
+| `BULL_BOARD_ENABLED`                                          | Manténgalo en `false` (valor recomendado). Solo `true` habilita el panel `/queues`.                                                                            |
+| `BULL_BOARD_USERNAME`, `BULL_BOARD_PASSWORD`                  | Credenciales obligatorias cuando Bull Board está habilitado; use valores secretos y un proxy TLS/red privada.                                                  |
+| `JWT_SECRET`                                                  | Secreto obligatorio usado para firmar y verificar tokens JWT; use un valor aleatorio distinto por entorno.                                                     |
+| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME` | Conexión a PostgreSQL. En Docker use el host `postgres_db`; en local, normalmente `localhost`.                                                                 |
+| `REDIS_HOST`, `REDIS_PORT`                                    | Conexión a Redis. En Docker use `redis_cache`; en local, normalmente `localhost`.                                                                              |
+| `ENCRYPTION_KEY`                                              | Clave AES-256: exactamente 64 caracteres hexadecimales. Genérela, por ejemplo, con `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`                      | Credencial y modelo de OpenRouter; la clave es opcional.                                                                                                       |
+| `PLATFORM_NSEC`, `PLATFORM_NPUB`                              | Identidad privada y pública de la plataforma Nostr. Admiten formato Nostr o hex de 64 caracteres.                                                              |
+| `NOSTR_RELAY_URL`                                             | URL WebSocket del relay que se escucha y se referencia en las respuestas como relay de origen.                                                                 |
+| `NOSTR_ZAP_RELAY_URL`                                         | Relay público anunciado en las solicitudes NIP-57; configúrelo si el relay de escucha es privado o inaccesible para el servidor LNURL.                         |
+| `NOSTR_PUBLISH_RELAY_URL`                                     | Relay donde se publican las respuestas promocionales. Si se omite, usa `NOSTR_RELAY_URL`. Use un relay público cuando los clientes deban ver las respuestas.  |
+| `NWC_FORCE_NIP04`                                              | Déjelo en `false`. Use `true` solo con wallets NWC que no responden al evento service-info NIP-47 pero requieren cifrado NIP-04.                              |
+
+> Antes de producción, externalice y rote las credenciales de infraestructura y las claves de la aplicación. El JWT debe gestionarse como secreto de despliegue, no como un valor compartido en el código o la documentación.
+
+## Arranque con Docker
+
+1. Prepare `.env` a partir de `.env.example` y conserve `DB_HOST=postgres_db` y `REDIS_HOST=redis_cache`.
+2. Inicie las dependencias y espere a que PostgreSQL acepte conexiones:
+
+   ```bash
+   docker compose up -d postgres_db redis_cache
+   docker compose logs -f postgres_db
+   ```
+
+3. En otra terminal, inicie la API:
+
+   ```bash
+   docker compose up --build api
+   ```
+
+La API queda en `http://localhost:3000`. PostgreSQL y Redis solo se exponen en la red interna de Docker; para administrarlos use `docker compose exec`, no puertos de host. Las migraciones pendientes se ejecutan al iniciar. Para detener los servicios, use `docker compose down`; los volúmenes nombrados conservan los datos. Use `docker compose down -v` solo si desea eliminar explícitamente las bases de datos locales.
+
+### Acceso seguro a Bull Board
+
+Bull Board está deshabilitado por defecto. Para habilitarlo temporalmente, configure valores secretos distintos de los ejemplos y sitúe la API detrás de TLS y una red privada o un proxy con control de acceso:
+
+```dotenv
+BULL_BOARD_ENABLED=true
+BULL_BOARD_USERNAME=<usuario-administrador>
+BULL_BOARD_PASSWORD=<contrasena-larga-y-aleatoria>
+```
+
+No exponga `/queues` directamente a Internet ni reutilice las credenciales de empresas. Al volver a una operación normal, establezca `BULL_BOARD_ENABLED=false` y reinicie la API.
+
+## Arranque local
+
+1. Levante PostgreSQL y Redis y cree una base de datos cuyo nombre coincida con `DB_NAME`.
+2. En `.env`, configure `DB_HOST=localhost` y `REDIS_HOST=localhost` (o los hosts reales).
+3. Instale dependencias y ejecute la API:
+
+   ```bash
+   npm ci
+   npm run migration:run
+   npm run start:dev
+   ```
+
+La aplicación también intenta ejecutar migraciones al arrancar. Ejecutarlas de forma explícita permite detectar problemas de conexión antes de levantar el listener de Nostr.
+
+## Migraciones
+
+Las migraciones TypeORM están en `src/migrations/` y el datasource CLI en `src/data-source.ts`.
 
 ```bash
-# unit tests
-$ npm run test
+# aplicar las pendientes
+npm run migration:run
 
-# e2e tests
-$ npm run test:e2e
+# revertir la última migración aplicada
+npm run migration:revert
 
-# test coverage
-$ npm run test:cov
+# generar una migración después de modificar entidades
+npm run migration:generate --name=NombreDescriptivo
 ```
 
-## Deployment
+Los comandos requieren las variables de PostgreSQL configuradas y una base de datos alcanzable. Revise la migración generada antes de aplicarla en cualquier entorno compartido.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## API principal
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+La validación global elimina propiedades no declaradas y rechaza payloads con campos adicionales. Las fechas se envían en ISO 8601.
+
+### Autenticación
+
+| Método y ruta      | Descripción                                               |
+| ------------------ | --------------------------------------------------------- |
+| `POST /companies`  | Crea una empresa con `name`, `email` y `password`.        |
+| `POST /auth/login` | Recibe `email` y `password`; responde con `access_token`. |
+
+El registro de empresas y el inicio de sesión son públicos. Las consultas, actualizaciones y eliminaciones de empresas requieren JWT y solo permiten operar sobre la propia empresa; las respuestas nunca incluyen hashes de contraseñas.
+
+Ejemplo de inicio de sesión:
+
+```json
+{
+  "email": "empresa@example.com",
+  "password": "una-contrasena-segura"
+}
+```
+
+Incluya el token obtenido en las operaciones de campañas:
+
+```text
+Authorization: Bearer <access_token>
+```
+
+### Campañas
+
+Todas las rutas de campañas requieren JWT y solo permiten operar sobre campañas de la empresa autenticada.
+
+| Método y ruta                 | Descripción                                                          |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `POST /campaigns`             | Crea una campaña activa tras comprobar la wallet y cifrar `nwcUrl`.  |
+| `GET /campaigns`              | Lista las campañas de la empresa autenticada.                        |
+| `GET /campaigns/:id`          | Obtiene una campaña propia.                                          |
+| `PATCH /campaigns/:id`        | Actualiza los campos proporcionados de una campaña activa o pausada. |
+| `PATCH /campaigns/:id/pause`  | Pausa una campaña activa.                                            |
+| `PATCH /campaigns/:id/resume` | Reanuda una campaña pausada.                                         |
+| `DELETE /campaigns/:id`       | Cancela una campaña; no la borra físicamente.                        |
+
+Payload de creación:
+
+```json
+{
+  "name": "Campaña de ejemplo",
+  "productDescription": "Descripción concisa del producto o servicio",
+  "keywords": ["nostr", "bitcoin"],
+  "nwcUrl": "<url-nwc-de-la-wallet>",
+  "satsPerImpact": 21,
+  "endsAt": "2026-08-01T00:00:00.000Z"
+}
+```
+
+`endsAt` debe ser futura y no superar 30 días desde la activación. Las campañas canceladas o completadas no se pueden editar; una campaña vencida se cierra automáticamente.
+
+## Calidad y pruebas
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+# compilar TypeScript
+npm run build
+
+# tests unitarios
+npm test -- --runInBand
+
+# cobertura
+npm run test:cov
+
+# formato y lint
+npm run format
+npm run lint
+
+# aplicar automáticamente las correcciones de lint seguras
+npm run lint:fix
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### Prueba E2E
 
-## Resources
+```bash
+npm ci
+docker compose -f docker-compose.e2e.yml up -d --wait
+npm run test:e2e
+docker compose -f docker-compose.e2e.yml down
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+La prueba importa el `AppModule` real y comprueba conectividad con PostgreSQL, Redis y `GET /`. `docker-compose.e2e.yml` levanta servicios aislados en los puertos `55432` y `56379`; `test/e2e.setup.ts` define credenciales y claves de prueba. El relay Nostr, NWC y el LLM se simulan, por lo que la suite no publica eventos ni realiza pagos externos.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+`docker compose ... down` detiene y elimina solo los contenedores E2E. No use `-v` salvo que quiera eliminar expresamente sus volúmenes de prueba.
