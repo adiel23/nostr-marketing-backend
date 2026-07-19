@@ -1,0 +1,33 @@
+services:
+  postgres_e2e:
+    image: postgres:16-alpine
+    ports:
+      - '55432:5432'
+    environment:
+      POSTGRES_USER: e2e_user
+      POSTGRES_PASSWORD: e2e_password
+      POSTGRES_DB: nostr_marketing_e2e
+    volumes:
+      - postgres_e2e_data:/var/lib/postgresql/data
+      - ./test/e2e-init.sql:/docker-entrypoint-initdb.d/01-e2e-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U e2e_user -d nostr_marketing_e2e']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis_e2e:
+    image: redis:7-alpine
+    ports:
+      - '56379:6379'
+    volumes:
+      - redis_e2e_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres_e2e_data:
+  redis_e2e_data:

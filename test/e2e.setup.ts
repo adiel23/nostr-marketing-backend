@@ -1,0 +1,14 @@
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'e2e-jwt-secret-not-for-production';
+process.env.DB_HOST = '127.0.0.1';
+process.env.DB_PORT = '55432';
+process.env.DB_USERNAME = 'e2e_user';
+process.env.DB_PASSWORD = 'e2e_password';
+process.env.DB_NAME = 'nostr_marketing_e2e';
+process.env.REDIS_HOST = '127.0.0.1';
+process.env.REDIS_PORT = '56379';
+process.env.ENCRYPTION_KEY = 'a'.repeat(64);
+process.env.PLATFORM_NSEC = 'b'.repeat(64);
+process.env.PLATFORM_NPUB = 'c'.repeat(64);
+process.env.NOSTR_RELAY_URL = 'ws://nostr-e2e.invalid';
+delete process.env.OPENROUTER_API_KEY;
