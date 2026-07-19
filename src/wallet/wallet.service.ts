@@ -1,28 +1,44 @@
-import { lookup } from 'node:dns/promises';
 import * as https from 'node:https';
-import { isIP } from 'node:net';
 import { Injectable, Logger } from '@nestjs/common';
 import { decodeInvoice } from '@getalby/lightning-tools/bolt11';
-import { finalizeEvent, type Event } from 'nostr-tools/pure';
+import { finalizeEvent, verifyEvent, type Event } from 'nostr-tools/pure';
 import { SimplePool } from 'nostr-tools/pool';
 import { nip57 } from 'nostr-tools';
 import { CryptoService } from 'src/crypto/crypto.service';
+import { MSATS_PER_SAT } from 'src/common/fees.util';
+import {
+  isPrivateOrLocalIpAddress,
+  resolvePublicAddress,
+} from 'src/common/network-security.util';
+import { isRecord } from 'src/common/type-guards.util';
 import { createNwcClient } from './nwc-client.util';
 import {
   getPlatformSecretKey,
   getRelayUrl,
   getZapRelayUrl,
 } from 'src/nostr/nostr-keys.util';
+import {
+  NOSTR_KIND_METADATA,
+  NOSTR_KIND_TEXT_NOTE,
+  NOSTR_KIND_ZAP_RECEIPT,
+} from 'src/nostr/nostr.constants';
 
-const MSATS_PER_SAT = 1_000;
 const LNURL_CALLBACK_TIMEOUT_MS = 5_000;
 const MAX_LNURL_RESPONSE_BYTES = 16 * 1024;
+const ZAP_RECEIPT_LOOKUP_ATTEMPTS = 2;
+const ZAP_RECEIPT_RETRY_DELAY_MS = 1_500;
 
 export type ZapResult =
   | {
       success: true;
       // Sats, rounded up from the NIP-47 fee amount expressed in msats.
       feesPaid: number;
+      preimage: string;
+      // false cuando el pago se liquido pero no se pudo verificar un
+      // zap receipt (NIP-57 kind 9735) valido en el relay: no bloquea el
+      // pago (ya ocurrio), pero indica que el exito no quedo confirmado
+      // publicamente y merece revision operativa.
+      receiptVerified: boolean;
     }
   | {
       success: false;
@@ -30,11 +46,25 @@ export type ZapResult =
       message: string;
     };
 
+export interface InvoiceReadyInfo {
+  bolt11: string;
+  paymentHash: string;
+}
+
 export interface SendZapInput {
   encryptedNwcUrl: string;
   targetPubkey: string;
   targetEventId: string;
   amountSats: number;
+  // Se invoca justo antes de pagar, para persistir el hash de pago y
+  // poder reconciliar el resultado si el proceso cae tras el pago.
+  onInvoiceReady?: (info: InvoiceReadyInfo) => Promise<void>;
+}
+
+export interface PaymentStatusResult {
+  settled: boolean;
+  feesPaid?: number;
+  preimage?: string;
 }
 
 export function msatsToSatsCeil(msats: number): number {
@@ -88,39 +118,148 @@ export function assertInvoiceAmount(
   }
 }
 
-function isPrivateOrLocalIpAddress(address: string): boolean {
-  const family = isIP(address);
-  if (family === 0) return false;
+function isValidZapReceipt(
+  receipt: Event,
+  params: {
+    targetEventId: string;
+    targetPubkey: string;
+    bolt11: string;
+    zapRequestId: string;
+  },
+): boolean {
+  if (receipt.kind !== NOSTR_KIND_ZAP_RECEIPT) return false;
+  if (!verifyEvent(receipt)) return false;
 
-  if (family === 4) {
-    const [first, second] = address.split('.').map(Number);
-    return (
-      first === 0 ||
-      first === 10 ||
-      first === 127 ||
-      first >= 224 ||
-      (first === 100 && second >= 64 && second <= 127) ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 168) ||
-      (first === 198 && (second === 18 || second === 19))
-    );
+  const eTag = receipt.tags.find((tag) => tag[0] === 'e');
+  const pTag = receipt.tags.find((tag) => tag[0] === 'p');
+  const bolt11Tag = receipt.tags.find((tag) => tag[0] === 'bolt11');
+  const descriptionTag = receipt.tags.find((tag) => tag[0] === 'description');
+
+  if (eTag?.[1] !== params.targetEventId) return false;
+  if (pTag?.[1] !== params.targetPubkey) return false;
+  if (bolt11Tag?.[1] !== params.bolt11) return false;
+  if (!descriptionTag?.[1]) return false;
+
+  try {
+    const zapRequest = JSON.parse(descriptionTag[1]) as { id?: unknown };
+    return zapRequest.id === params.zapRequestId;
+  } catch {
+    return false;
   }
+}
 
-  const normalized = address.toLowerCase();
-  return (
-    normalized === '::' ||
-    normalized === '::1' ||
-    normalized.startsWith('::ffff:') ||
-    normalized.startsWith('fc') ||
-    normalized.startsWith('fd') ||
-    /^fe[89ab]/.test(normalized)
+function getLnurlResponse(url: URL, address: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const request = https.request(
+      {
+        protocol: 'https:',
+        hostname: address,
+        servername: url.hostname.replace(/^\[|\]$/g, ''),
+        port: url.port ? Number(url.port) : 443,
+        method: 'GET',
+        path: `${url.pathname}${url.search}`,
+        headers: {
+          accept: 'application/json',
+          host: url.host,
+        },
+      },
+      (response) => {
+        const statusCode = response.statusCode ?? 0;
+        if (statusCode >= 300 && statusCode < 400) {
+          response.resume();
+          rejectOnce(new Error('El callback LNURL no puede redirigir.'));
+          return;
+        }
+
+        if (statusCode < 200 || statusCode >= 300) {
+          response.resume();
+          rejectOnce(
+            new Error(`LNURL callback respondiÃ³ con status ${statusCode}`),
+          );
+          return;
+        }
+
+        const contentLengthHeader = response.headers['content-length'];
+        const contentLength = Number(
+          Array.isArray(contentLengthHeader)
+            ? contentLengthHeader[0]
+            : contentLengthHeader,
+        );
+        if (
+          contentLengthHeader !== undefined &&
+          (!Number.isSafeInteger(contentLength) ||
+            contentLength < 0 ||
+            contentLength > MAX_LNURL_RESPONSE_BYTES)
+        ) {
+          response.resume();
+          rejectOnce(
+            new Error('La respuesta LNURL excede el lÃ­mite permitido.'),
+          );
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let receivedBytes = 0;
+        response.on('data', (chunk: Buffer | string) => {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          receivedBytes += buffer.length;
+          if (receivedBytes > MAX_LNURL_RESPONSE_BYTES) {
+            request.destroy(
+              new Error('La respuesta LNURL excede el lÃ­mite permitido.'),
+            );
+            return;
+          }
+          chunks.push(buffer);
+        });
+        response.on('error', rejectOnce);
+        response.on('end', () => {
+          if (settled) return;
+          settled = true;
+          resolve(Buffer.concat(chunks).toString('utf8'));
+        });
+      },
+    );
+
+    request.setTimeout(LNURL_CALLBACK_TIMEOUT_MS, () => {
+      request.destroy(
+        new Error('El callback LNURL excediÃ³ el tiempo lÃ­mite.'),
+      );
+    });
+    request.on('error', rejectOnce);
+    request.end();
+  });
+}
+
+/**
+ * Fetch minimo con las mismas defensas anti-SSRF que el callback LNURL
+ * (solo HTTPS, sin credenciales, sin redes locales, DNS pinning tras
+ * resolver). Se instala como implementacion de fetch de nip57 para que
+ * `getZapEndpoint` -que deriva una URL del perfil Nostr del destinatario,
+ * un dato controlado por el propio usuario objetivo- nunca conecte a una
+ * red privada, en vez de reimplementar a mano el parseo de lud06/lud16.
+ */
+export async function secureNip57Fetch(
+  input: string | URL,
+): Promise<{ json(): Promise<unknown> }> {
+  const url = validateLnurlCallbackUrl(input.toString());
+  const address = await resolvePublicAddress(
+    url.hostname.replace(/^\[|\]$/g, ''),
   );
+  const responseText = await getLnurlResponse(url, address);
+
+  return {
+    json: () => Promise.resolve(JSON.parse(responseText) as unknown),
+  };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+nip57.useFetchImplementation(secureNip57Fetch);
 
 @Injectable()
 export class WalletService {
@@ -162,7 +301,7 @@ export class WalletService {
         event: {
           id: input.targetEventId,
           pubkey: input.targetPubkey,
-          kind: 1,
+          kind: NOSTR_KIND_TEXT_NOTE,
           tags: [],
           content: '',
           created_at: 0,
@@ -184,20 +323,46 @@ export class WalletService {
       );
       assertInvoiceAmount(invoice, amountMsats);
 
-      const client = createNwcClient(nwcUrl);
+      if (input.onInvoiceReady) {
+        const decoded = decodeInvoice(invoice);
+        if (!decoded) {
+          throw new Error('No se pudo decodificar la invoice del Zap.');
+        }
+        await input.onInvoiceReady({
+          bolt11: invoice,
+          paymentHash: decoded.paymentHash,
+        });
+      }
+
+      const client = await createNwcClient(nwcUrl);
+      let payment: Awaited<ReturnType<typeof client.payInvoice>>;
 
       try {
-        const payment = await client.payInvoice({
-          invoice,
-          amount: amountMsats,
-        });
-        return {
-          success: true,
-          feesPaid: msatsToSatsCeil(payment.fees_paid ?? 0),
-        };
+        payment = await client.payInvoice({ invoice, amount: amountMsats });
       } finally {
         client.close();
       }
+
+      const receiptVerified = await this.verifyZapReceipt({
+        relayUrl: zapRelayUrl,
+        targetEventId: input.targetEventId,
+        targetPubkey: input.targetPubkey,
+        bolt11: invoice,
+        zapRequestId: signedZapRequest.id,
+      });
+
+      if (!receiptVerified) {
+        this.logger.warn(
+          `Zap pagado para ${input.targetEventId} sin zap receipt NIP-57 verificable en ${zapRelayUrl}.`,
+        );
+      }
+
+      return {
+        success: true,
+        feesPaid: msatsToSatsCeil(payment.fees_paid ?? 0),
+        preimage: payment.preimage,
+        receiptVerified,
+      };
     } catch (error) {
       this.logger.warn('Fallo al procesar el Zap', error);
       return {
@@ -209,6 +374,84 @@ export class WalletService {
     } finally {
       nwcUrl = undefined;
     }
+  }
+
+  /**
+   * Consulta el estado real de un pago ya intentado, para reconciliar
+   * impactos cuyo resultado quedo ambiguo (por ejemplo, tras un timeout
+   * de payInvoice o una caida del proceso). Nunca vuelve a pagar.
+   */
+  async checkPaymentStatus(
+    encryptedNwcUrl: string,
+    paymentHash: string,
+  ): Promise<PaymentStatusResult> {
+    const nwcUrl = this.cryptoService.decrypt(encryptedNwcUrl);
+    const client = await createNwcClient(nwcUrl);
+
+    try {
+      const transaction = await client.lookupInvoice({
+        payment_hash: paymentHash,
+      });
+
+      if (transaction.state !== 'settled') {
+        return { settled: false };
+      }
+
+      return {
+        settled: true,
+        feesPaid: msatsToSatsCeil(transaction.fees_paid ?? 0),
+        preimage: transaction.preimage,
+      };
+    } catch (error) {
+      this.logger.warn('No se pudo reconciliar el pago con la wallet', error);
+      return { settled: false };
+    } finally {
+      client.close();
+    }
+  }
+
+  /**
+   * Verifica en el relay de zaps que exista un zap receipt NIP-57 (kind
+   * 9735) real para este pago: firma valida, tags e/p correctos, bolt11
+   * pagado y zap request coincidentes. El receipt lo publica el servidor
+   * LNURL del receptor luego de liquidar el pago, asi que puede tardar en
+   * aparecer; se reintenta una vez con una espera breve antes de
+   * declarar que no se pudo verificar.
+   */
+  private async verifyZapReceipt(params: {
+    relayUrl: string;
+    targetEventId: string;
+    targetPubkey: string;
+    bolt11: string;
+    zapRequestId: string;
+  }): Promise<boolean> {
+    for (let attempt = 1; attempt <= ZAP_RECEIPT_LOOKUP_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, ZAP_RECEIPT_RETRY_DELAY_MS),
+        );
+      }
+
+      const pool = new SimplePool();
+      try {
+        const receipts = await pool.querySync([params.relayUrl], {
+          kinds: [NOSTR_KIND_ZAP_RECEIPT],
+          '#e': [params.targetEventId],
+          '#p': [params.targetPubkey],
+          limit: 10,
+        });
+
+        if (receipts.some((receipt) => isValidZapReceipt(receipt, params))) {
+          return true;
+        }
+      } catch (error) {
+        this.logger.warn('No se pudo consultar el zap receipt NIP-57', error);
+      } finally {
+        pool.close([params.relayUrl]);
+      }
+    }
+
+    return false;
   }
 
   private satsToMsats(sats: number): number {
@@ -229,7 +472,7 @@ export class WalletService {
     const pool = new SimplePool();
     try {
       const events = await pool.querySync([relayUrl], {
-        kinds: [0],
+        kinds: [NOSTR_KIND_METADATA],
         authors: [pubkey],
         limit: 1,
       });
@@ -248,10 +491,10 @@ export class WalletService {
     url.searchParams.set('amount', amountMsats.toString());
     url.searchParams.set('nostr', JSON.stringify(signedZapRequest));
 
-    const address = await this.resolvePublicAddress(
+    const address = await resolvePublicAddress(
       url.hostname.replace(/^\[|\]$/g, ''),
     );
-    const responseText = await this.getLnurlResponse(url, address);
+    const responseText = await getLnurlResponse(url, address);
     let body: unknown;
 
     try {
@@ -277,107 +520,5 @@ export class WalletService {
     }
 
     return body.pr;
-  }
-
-  private async resolvePublicAddress(hostname: string): Promise<string> {
-    const addresses = await lookup(hostname, { all: true, verbatim: true });
-    const publicAddress = addresses.find(
-      ({ address }) => !isPrivateOrLocalIpAddress(address),
-    );
-
-    if (!publicAddress) {
-      throw new Error('El callback LNURL resuelve a una red privada o local.');
-    }
-
-    return publicAddress.address;
-  }
-
-  private getLnurlResponse(url: URL, address: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      const rejectOnce = (error: Error) => {
-        if (settled) return;
-        settled = true;
-        reject(error);
-      };
-
-      const request = https.request(
-        {
-          protocol: 'https:',
-          hostname: address,
-          servername: url.hostname.replace(/^\[|\]$/g, ''),
-          port: url.port ? Number(url.port) : 443,
-          method: 'GET',
-          path: `${url.pathname}${url.search}`,
-          headers: {
-            accept: 'application/json',
-            host: url.host,
-          },
-        },
-        (response) => {
-          const statusCode = response.statusCode ?? 0;
-          if (statusCode >= 300 && statusCode < 400) {
-            response.resume();
-            rejectOnce(new Error('El callback LNURL no puede redirigir.'));
-            return;
-          }
-
-          if (statusCode < 200 || statusCode >= 300) {
-            response.resume();
-            rejectOnce(
-              new Error(`LNURL callback respondiÃ³ con status ${statusCode}`),
-            );
-            return;
-          }
-
-          const contentLengthHeader = response.headers['content-length'];
-          const contentLength = Number(
-            Array.isArray(contentLengthHeader)
-              ? contentLengthHeader[0]
-              : contentLengthHeader,
-          );
-          if (
-            contentLengthHeader !== undefined &&
-            (!Number.isSafeInteger(contentLength) ||
-              contentLength < 0 ||
-              contentLength > MAX_LNURL_RESPONSE_BYTES)
-          ) {
-            response.resume();
-            rejectOnce(
-              new Error('La respuesta LNURL excede el lÃ­mite permitido.'),
-            );
-            return;
-          }
-
-          const chunks: Buffer[] = [];
-          let receivedBytes = 0;
-          response.on('data', (chunk: Buffer | string) => {
-            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-            receivedBytes += buffer.length;
-            if (receivedBytes > MAX_LNURL_RESPONSE_BYTES) {
-              request.destroy(
-                new Error('La respuesta LNURL excede el lÃ­mite permitido.'),
-              );
-              return;
-            }
-            chunks.push(buffer);
-          });
-          response.on('error', rejectOnce);
-          response.on('end', () => {
-            if (settled) return;
-            settled = true;
-            resolve(Buffer.concat(chunks).toString('utf8'));
-          });
-        },
-      );
-
-      request.setTimeout(LNURL_CALLBACK_TIMEOUT_MS, () => {
-        request.destroy(
-          new Error('El callback LNURL excediÃ³ el tiempo lÃ­mite.'),
-        );
-      });
-      request.on('error', rejectOnce);
-      request.end();
-    });
   }
 }

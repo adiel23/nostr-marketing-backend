@@ -18,7 +18,9 @@ import { ImpactsService } from 'src/impacts/impacts.service';
 import { NostrPublisher } from './nostr.publisher';
 import { WalletService } from 'src/wallet/wallet.service';
 import { ImpactStatus } from 'src/impacts/entities/impact.entity';
+import { BudgetExceededException } from 'src/impacts/impacts.service';
 import { CampaignStatus } from 'src/campaigns/entities/campaign.entity';
+import type { SendZapInput, ZapResult } from 'src/wallet/wallet.service';
 
 describe('ImpactExecutionService', () => {
   let service: ImpactExecutionService;
@@ -29,12 +31,15 @@ describe('ImpactExecutionService', () => {
   const impactsService = {
     reserveImpact: jest.fn(),
     completeImpact: jest.fn(),
+    recordPaymentAttempt: jest.fn(),
+    findStalePending: jest.fn(),
   };
   const nostrPublisher = {
     publishComment: jest.fn(),
   };
   const walletService = {
-    sendZap: jest.fn(),
+    sendZap: jest.fn<Promise<ZapResult>, [SendZapInput]>(),
+    checkPaymentStatus: jest.fn(),
   };
 
   const jobData = {
@@ -88,7 +93,12 @@ describe('ImpactExecutionService', () => {
   });
 
   it('registra full_success cuando el zap se procesa correctamente', async () => {
-    walletService.sendZap.mockResolvedValue({ success: true, feesPaid: 1 });
+    walletService.sendZap.mockResolvedValue({
+      success: true,
+      feesPaid: 1,
+      preimage: 'preimage-abc',
+      receiptVerified: true,
+    });
 
     const result = await service.executeApprovedImpact(jobData);
 
@@ -97,24 +107,51 @@ describe('ImpactExecutionService', () => {
       targetPubkey: jobData.pubkey,
       content: 'Wallet Bitcoin: Wallet segura',
     });
-    expect(walletService.sendZap).toHaveBeenCalledWith({
+    const [sendZapArgs] = walletService.sendZap.mock.calls[0];
+    expect(sendZapArgs).toMatchObject({
       encryptedNwcUrl: campaign.nwcUrlEncrypted,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
       amountSats: campaign.satsPerImpact,
     });
+    expect(typeof sendZapArgs.onInvoiceReady).toBe('function');
     expect(impactsService.reserveImpact).toHaveBeenCalledWith({
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
+      reserveSats: 103,
     });
     expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-1', {
       status: ImpactStatus.FULL_SUCCESS,
       satsCharged: 103,
       platformFee: 2,
+      commentEventId: 'comment-1',
+      preimage: 'preimage-abc',
     });
     expect(result.status).toBe(ImpactStatus.FULL_SUCCESS);
     expect(result.zapSent).toBe(true);
+  });
+
+  it('registra la invoice y el hash de pago antes de invocar payInvoice', async () => {
+    walletService.sendZap.mockImplementation(async (input) => {
+      await input.onInvoiceReady?.({
+        bolt11: 'lnbc1...',
+        paymentHash: 'hash-abc',
+      });
+      return {
+        success: true,
+        feesPaid: 1,
+        preimage: 'preimage-abc',
+        receiptVerified: true,
+      };
+    });
+
+    await service.executeApprovedImpact(jobData);
+
+    expect(impactsService.recordPaymentAttempt).toHaveBeenCalledWith(
+      'impact-1',
+      { bolt11: 'lnbc1...', paymentHash: 'hash-abc' },
+    );
   });
 
   it('registra comment_only cuando el zap falla', async () => {
@@ -130,6 +167,8 @@ describe('ImpactExecutionService', () => {
       status: ImpactStatus.COMMENT_ONLY,
       satsCharged: 2,
       platformFee: 2,
+      commentEventId: 'comment-1',
+      preimage: undefined,
     });
     expect(result.status).toBe(ImpactStatus.COMMENT_ONLY);
     expect(result.zapSent).toBe(false);
@@ -153,16 +192,109 @@ describe('ImpactExecutionService', () => {
     expect(walletService.sendZap).not.toHaveBeenCalled();
   });
 
+  it('no publica ni paga cuando el presupuesto de la campaña esta agotado', async () => {
+    impactsService.reserveImpact.mockRejectedValue(
+      new BudgetExceededException(),
+    );
+
+    await expect(service.executeApprovedImpact(jobData)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(nostrPublisher.publishComment).not.toHaveBeenCalled();
+    expect(walletService.sendZap).not.toHaveBeenCalled();
+  });
+
   it('no repite efectos externos cuando la reserva ya existe', async () => {
     impactsService.reserveImpact.mockResolvedValue({
-      impact: { id: 'impact-1', status: ImpactStatus.FULL_SUCCESS },
+      impact: {
+        id: 'impact-1',
+        status: ImpactStatus.FULL_SUCCESS,
+        commentEventId: 'previous-comment-id',
+      },
       reserved: false,
     });
 
     const result = await service.executeApprovedImpact(jobData);
 
     expect(result.zapSent).toBe(true);
+    expect(result.commentEventId).toBe('previous-comment-id');
     expect(nostrPublisher.publishComment).not.toHaveBeenCalled();
     expect(walletService.sendZap).not.toHaveBeenCalled();
+  });
+
+  describe('reconcileStalePendingImpacts', () => {
+    it('cierra como comment_only un pending sin intento de pago registrado', async () => {
+      impactsService.findStalePending.mockResolvedValue([
+        { id: 'impact-2', campaignId: campaign.id, paymentHash: null },
+      ]);
+
+      await service.reconcileStalePendingImpacts();
+
+      expect(walletService.checkPaymentStatus).not.toHaveBeenCalled();
+      expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-2', {
+        status: ImpactStatus.COMMENT_ONLY,
+        satsCharged: 2,
+        platformFee: 2,
+      });
+    });
+
+    it('cierra como full_success un pending cuyo pago quedo liquidado en la wallet', async () => {
+      impactsService.findStalePending.mockResolvedValue([
+        { id: 'impact-3', campaignId: campaign.id, paymentHash: 'hash-abc' },
+      ]);
+      walletService.checkPaymentStatus.mockResolvedValue({
+        settled: true,
+        feesPaid: 1,
+        preimage: 'preimage-xyz',
+      });
+
+      await service.reconcileStalePendingImpacts();
+
+      expect(walletService.checkPaymentStatus).toHaveBeenCalledWith(
+        campaign.nwcUrlEncrypted,
+        'hash-abc',
+      );
+      expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-3', {
+        status: ImpactStatus.FULL_SUCCESS,
+        satsCharged: 103,
+        platformFee: 2,
+        preimage: 'preimage-xyz',
+      });
+    });
+
+    it('cierra como comment_only un pending cuyo pago no se liquido', async () => {
+      impactsService.findStalePending.mockResolvedValue([
+        { id: 'impact-4', campaignId: campaign.id, paymentHash: 'hash-abc' },
+      ]);
+      walletService.checkPaymentStatus.mockResolvedValue({ settled: false });
+
+      await service.reconcileStalePendingImpacts();
+
+      expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-4', {
+        status: ImpactStatus.COMMENT_ONLY,
+        satsCharged: 2,
+        platformFee: 2,
+      });
+    });
+
+    it('cierra como comment_only sin cargo si la campaña ya no existe', async () => {
+      impactsService.findStalePending.mockResolvedValue([
+        {
+          id: 'impact-5',
+          campaignId: 'missing-campaign',
+          paymentHash: 'hash-abc',
+        },
+      ]);
+      campaignsService.findById.mockResolvedValue(null);
+
+      await service.reconcileStalePendingImpacts();
+
+      expect(walletService.checkPaymentStatus).not.toHaveBeenCalled();
+      expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-5', {
+        status: ImpactStatus.COMMENT_ONLY,
+        satsCharged: 0,
+        platformFee: 0,
+      });
+    });
   });
 });

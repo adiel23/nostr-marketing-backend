@@ -48,6 +48,18 @@ export class Campaign {
   @Column({ name: 'sats_per_impact', type: 'integer' })
   satsPerImpact!: number;
 
+  // Presupuesto total autorizado para la campaña, en sats.
+  @Column({ name: 'budget_sats', type: 'integer' })
+  budgetSats!: number;
+
+  // Suma de reservas de impactos en curso (pending), en sats.
+  @Column({ name: 'reserved_sats', type: 'integer', default: 0 })
+  reservedSats!: number;
+
+  // Suma confirmada de sats ya gastados (full_success + comment_only), en sats.
+  @Column({ name: 'spent_sats', type: 'integer', default: 0 })
+  spentSats!: number;
+
   @Column({
     type: 'enum',
     enum: CampaignStatus,

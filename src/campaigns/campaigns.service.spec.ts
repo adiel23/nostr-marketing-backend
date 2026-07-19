@@ -40,7 +40,11 @@ describe('CampaignsService', () => {
           provide: CryptoService,
           useValue: {
             encrypt: jest.fn().mockReturnValue('encrypted-url'),
-            decrypt: jest.fn().mockReturnValue('nostr+walletconnect://test'),
+            decrypt: jest
+              .fn()
+              .mockReturnValue(
+                'nostr+walletconnect://test?relay=wss://93.184.216.34',
+              ),
           },
         },
       ],
@@ -59,8 +63,9 @@ describe('CampaignsService', () => {
       name: 'Test campaign',
       productDescription: 'Description',
       keywords: ['a'],
-      nwcUrl: 'nostr+walletconnect://test',
+      nwcUrl: 'nostr+walletconnect://test?relay=wss://93.184.216.34',
       satsPerImpact: 10,
+      budgetSats: 1000,
       endsAt: new Date(Date.now() - 1000).toISOString(),
     };
 
@@ -74,8 +79,9 @@ describe('CampaignsService', () => {
       name: 'Test campaign',
       productDescription: 'Description',
       keywords: ['a'],
-      nwcUrl: 'nostr+walletconnect://test',
+      nwcUrl: 'nostr+walletconnect://test?relay=wss://93.184.216.34',
       satsPerImpact: 10,
+      budgetSats: 1000,
       endsAt: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString(),
     };
 
@@ -94,8 +100,9 @@ describe('CampaignsService', () => {
       name: 'Test campaign',
       productDescription: 'Description',
       keywords: ['wallet'],
-      nwcUrl: 'nostr+walletconnect://test',
+      nwcUrl: 'nostr+walletconnect://test?relay=wss://93.184.216.34',
       satsPerImpact: 10,
+      budgetSats: 1000,
       endsAt: new Date(Date.now() + 60_000).toISOString(),
     };
 
@@ -109,14 +116,52 @@ describe('CampaignsService', () => {
       name: 'Test campaign',
       productDescription: 'Description',
       keywords: ['wallet'],
-      nwcUrl: 'nostr+walletconnect://test',
+      nwcUrl: 'nostr+walletconnect://test?relay=wss://93.184.216.34',
       satsPerImpact: 0,
+      budgetSats: 1000,
       endsAt: new Date(Date.now() + 60_000).toISOString(),
     };
 
     await expect(service.create(dto, 'company-id')).rejects.toThrow(
       BadRequestException,
     );
+    expect(NWCClient).not.toHaveBeenCalled();
+  });
+
+  it('rejects a budget that cannot cover a single impact', async () => {
+    const dto: CreateCampaignDto = {
+      name: 'Test campaign',
+      productDescription: 'Description',
+      keywords: ['wallet'],
+      nwcUrl: 'nostr+walletconnect://test?relay=wss://93.184.216.34',
+      satsPerImpact: 100,
+      budgetSats: 50,
+      endsAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+
+    await expect(service.create(dto, 'company-id')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(NWCClient).not.toHaveBeenCalled();
+  });
+
+  it('rejects lowering the budget below what is already reserved or spent', async () => {
+    const campaign = {
+      id: 'campaign-id',
+      companyId: 'company-a',
+      status: CampaignStatus.ACTIVE,
+      satsPerImpact: 100,
+      budgetSats: 1000,
+      reservedSats: 300,
+      spentSats: 200,
+      nwcUrlEncrypted: 'encrypted-url',
+      endsAt: new Date(Date.now() + 60_000),
+    } as Campaign;
+    campaignsRepository.findOne.mockResolvedValue(campaign);
+
+    await expect(
+      service.update(campaign.id, { budgetSats: 400 }, campaign.companyId),
+    ).rejects.toThrow(BadRequestException);
     expect(NWCClient).not.toHaveBeenCalled();
   });
 

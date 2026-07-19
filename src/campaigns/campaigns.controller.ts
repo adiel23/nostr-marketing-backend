@@ -9,14 +9,11 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { AuthenticatedRequest } from 'src/auth/authenticated-request.interface';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
-
-interface AuthenticatedRequest {
-  user: { id: string };
-}
 
 @Controller('campaigns')
 @UseGuards(JwtAuthGuard)

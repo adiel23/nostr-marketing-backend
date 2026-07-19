@@ -8,6 +8,7 @@ function createValidDto(): CreateCampaignDto {
     keywords: ['wallet'],
     nwcUrl: 'nostr+walletconnect://example',
     satsPerImpact: 1,
+    budgetSats: 100,
     endsAt: new Date(Date.now() + 60_000).toISOString(),
   });
 }

@@ -10,10 +10,14 @@ jest.mock('nostr-tools', () => ({
   nip57: {
     getZapEndpoint: jest.fn(),
     makeZapRequest: jest.fn(),
+    useFetchImplementation: jest.fn(),
   },
 }));
 jest.mock('nostr-tools/pool', () => ({ SimplePool: jest.fn() }));
-jest.mock('nostr-tools/pure', () => ({ finalizeEvent: jest.fn() }));
+jest.mock('nostr-tools/pure', () => ({
+  finalizeEvent: jest.fn(),
+  verifyEvent: jest.fn(() => true),
+}));
 jest.mock('src/nostr/nostr-keys.util', () => ({
   getPlatformSecretKey: jest.fn(() => new Uint8Array(32)),
   getRelayUrl: jest.fn(() => 'wss://relay.example'),
@@ -48,6 +52,7 @@ describe('WalletService', () => {
   let service: WalletService;
   const decrypt = jest.fn();
   const payInvoice = jest.fn();
+  const lookupInvoice = jest.fn();
   const close = jest.fn();
 
   beforeEach(async () => {
@@ -61,12 +66,19 @@ describe('WalletService', () => {
     }).compile();
 
     service = module.get(WalletService);
-    decrypt.mockReturnValue('nostr+walletconnect://wallet');
+    decrypt.mockReturnValue(
+      'nostr+walletconnect://wallet?relay=wss://93.184.216.34',
+    );
     (lookup as unknown as jest.Mock).mockResolvedValue([
       { address: '93.184.216.34', family: 4 },
     ]);
     (SimplePool as unknown as jest.Mock).mockImplementation(() => ({
-      querySync: jest.fn().mockResolvedValue([{ id: 'metadata' }]),
+      querySync: jest.fn((_relays: string[], filter: { kinds?: number[] }) => {
+        if (filter.kinds?.includes(9735)) {
+          return Promise.resolve([validZapReceipt()]);
+        }
+        return Promise.resolve([{ id: 'metadata' }]);
+      }),
       close: jest.fn(),
     }));
     (nip57.getZapEndpoint as unknown as jest.Mock).mockResolvedValue(
@@ -74,10 +86,14 @@ describe('WalletService', () => {
     );
     (nip57.makeZapRequest as unknown as jest.Mock).mockReturnValue({});
     (finalizeEvent as jest.Mock).mockReturnValue({ id: 'zap-request' });
-    (decodeInvoice as jest.Mock).mockReturnValue({ millisatoshi: 5_000 });
-    payInvoice.mockResolvedValue({ fees_paid: 1_500 });
+    (decodeInvoice as jest.Mock).mockReturnValue({
+      millisatoshi: 5_000,
+      paymentHash: 'hash-abc',
+    });
+    payInvoice.mockResolvedValue({ fees_paid: 1_500, preimage: 'preimage-1' });
     (NWCClient as unknown as jest.Mock).mockImplementation(() => ({
       payInvoice,
+      lookupInvoice,
       close,
     }));
     mockLnurlResponse(JSON.stringify({ pr: 'lnbc-test' }));
@@ -129,6 +145,8 @@ describe('WalletService', () => {
     await expect(service.sendZap(createInput())).resolves.toEqual({
       success: true,
       feesPaid: 2,
+      preimage: 'preimage-1',
+      receiptVerified: true,
     });
 
     expect(payInvoice).toHaveBeenCalledWith({
@@ -140,6 +158,96 @@ describe('WalletService', () => {
     );
     expect(close).toHaveBeenCalledTimes(1);
     expect(httpsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the zap as unverified when no valid NIP-57 receipt appears', async () => {
+    (SimplePool as unknown as jest.Mock).mockImplementation(() => ({
+      querySync: jest.fn((_relays: string[], filter: { kinds?: number[] }) => {
+        if (filter.kinds?.includes(9735)) return Promise.resolve([]);
+        return Promise.resolve([{ id: 'metadata' }]);
+      }),
+      close: jest.fn(),
+    }));
+
+    const result = await service.sendZap(createInput());
+
+    expect(result).toMatchObject({ success: true, receiptVerified: false });
+  }, 10_000);
+
+  it('rejects a receipt for the wrong event or with an invalid signature', async () => {
+    (SimplePool as unknown as jest.Mock).mockImplementation(() => ({
+      querySync: jest.fn((_relays: string[], filter: { kinds?: number[] }) => {
+        if (filter.kinds?.includes(9735)) {
+          return Promise.resolve([
+            validZapReceipt({ targetEventId: 'other-event' }),
+          ]);
+        }
+        return Promise.resolve([{ id: 'metadata' }]);
+      }),
+      close: jest.fn(),
+    }));
+
+    const result = await service.sendZap(createInput());
+
+    expect(result).toMatchObject({ success: true, receiptVerified: false });
+  }, 10_000);
+
+  it('records the invoice and payment hash before invoking payInvoice', async () => {
+    const onInvoiceReady = jest.fn().mockResolvedValue(undefined);
+    const callOrder: string[] = [];
+    onInvoiceReady.mockImplementation(() => {
+      callOrder.push('onInvoiceReady');
+      return Promise.resolve();
+    });
+    payInvoice.mockImplementation(() => {
+      callOrder.push('payInvoice');
+      return Promise.resolve({ fees_paid: 1_500, preimage: 'preimage-1' });
+    });
+
+    await service.sendZap({ ...createInput(), onInvoiceReady });
+
+    expect(onInvoiceReady).toHaveBeenCalledWith({
+      bolt11: 'lnbc-test',
+      paymentHash: 'hash-abc',
+    });
+    expect(callOrder).toEqual(['onInvoiceReady', 'payInvoice']);
+  });
+
+  describe('checkPaymentStatus', () => {
+    it('reports a settled payment with its real fee and preimage', async () => {
+      lookupInvoice.mockResolvedValue({
+        state: 'settled',
+        fees_paid: 1_500,
+        preimage: 'preimage-2',
+      });
+
+      await expect(
+        service.checkPaymentStatus('encrypted-wallet', 'hash-abc'),
+      ).resolves.toEqual({
+        settled: true,
+        feesPaid: 2,
+        preimage: 'preimage-2',
+      });
+      expect(lookupInvoice).toHaveBeenCalledWith({ payment_hash: 'hash-abc' });
+      expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports an unsettled payment as not settled', async () => {
+      lookupInvoice.mockResolvedValue({ state: 'pending' });
+
+      await expect(
+        service.checkPaymentStatus('encrypted-wallet', 'hash-abc'),
+      ).resolves.toEqual({ settled: false });
+    });
+
+    it('fails safe to not-settled when the wallet lookup errors', async () => {
+      lookupInvoice.mockRejectedValue(new Error('invoice not found'));
+
+      await expect(
+        service.checkPaymentStatus('encrypted-wallet', 'hash-abc'),
+      ).resolves.toEqual({ settled: false });
+      expect(close).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('does not pay a mismatched invoice amount', async () => {
@@ -177,6 +285,18 @@ function createInput() {
     targetPubkey: 'target-pubkey',
     targetEventId: 'target-event',
     amountSats: 5,
+  };
+}
+
+function validZapReceipt(overrides: { targetEventId?: string } = {}) {
+  return {
+    kind: 9735,
+    tags: [
+      ['e', overrides.targetEventId ?? 'target-event'],
+      ['p', 'target-pubkey'],
+      ['bolt11', 'lnbc-test'],
+      ['description', JSON.stringify({ id: 'zap-request' })],
+    ],
   };
 }
 

@@ -10,13 +10,13 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { In, LessThanOrEqual, MoreThan, Repository } from 'typeorm';
 import { CryptoService } from 'src/crypto/crypto.service';
 import { createNwcClient } from 'src/wallet/nwc-client.util';
+import { estimateImpactCostSats, MSATS_PER_SAT } from 'src/common/fees.util';
+import { CampaignResponseDto } from './dto/campaign-response.dto';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { Campaign, CampaignStatus } from './entities/campaign.entity';
 
 const CAMPAIGN_MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
-const MSATS_PER_SAT = 1_000;
-const WALLET_RESERVE_MULTIPLIER = 1.023;
 
 @Injectable()
 export class CampaignsService {
@@ -29,9 +29,9 @@ export class CampaignsService {
   async create(
     createCampaignDto: CreateCampaignDto,
     companyId: string,
-  ): Promise<Campaign> {
-    const { nwcUrl, satsPerImpact } = createCampaignDto;
-    await this.validateWallet(nwcUrl, satsPerImpact);
+  ): Promise<CampaignResponseDto> {
+    const { nwcUrl, satsPerImpact, budgetSats } = createCampaignDto;
+    await this.validateWallet(nwcUrl, satsPerImpact, budgetSats);
     const endsAt = this.getValidEndsAt(createCampaignDto.endsAt, new Date());
 
     const newCampaign = this.campaignsRepository.create({
@@ -41,20 +41,22 @@ export class CampaignsService {
       keywords: createCampaignDto.keywords,
       nwcUrlEncrypted: this.cryptoService.encrypt(nwcUrl),
       satsPerImpact,
+      budgetSats,
+      reservedSats: 0,
+      spentSats: 0,
       endsAt,
       status: CampaignStatus.ACTIVE,
     });
 
-    return this.campaignsRepository.save(newCampaign);
+    return this.toResponse(await this.campaignsRepository.save(newCampaign));
   }
 
-  async findActive(companyId?: string): Promise<Campaign[]> {
+  async findActive(): Promise<Campaign[]> {
     try {
       return await this.campaignsRepository.find({
         where: {
           status: CampaignStatus.ACTIVE,
           endsAt: MoreThan(new Date()),
-          ...(companyId ? { companyId } : {}),
         },
         order: { createdAt: 'DESC' },
       });
@@ -65,26 +67,27 @@ export class CampaignsService {
     }
   }
 
-  findAll(companyId: string): Promise<Campaign[]> {
-    return this.campaignsRepository.find({
+  async findAll(companyId: string): Promise<CampaignResponseDto[]> {
+    const campaigns = await this.campaignsRepository.find({
       where: { companyId },
       order: { createdAt: 'DESC' },
     });
+    return campaigns.map((campaign) => this.toResponse(campaign));
   }
 
   async findById(id: string): Promise<Campaign | null> {
     return this.campaignsRepository.findOne({ where: { id } });
   }
 
-  async findOne(id: string, companyId: string): Promise<Campaign> {
-    return this.findOwnedCampaign(id, companyId);
+  async findOne(id: string, companyId: string): Promise<CampaignResponseDto> {
+    return this.toResponse(await this.findOwnedCampaign(id, companyId));
   }
 
   async update(
     id: string,
     updateCampaignDto: UpdateCampaignDto,
     companyId: string,
-  ): Promise<Campaign> {
+  ): Promise<CampaignResponseDto> {
     const campaign = await this.findOwnedCampaign(id, companyId);
     await this.ensureCampaignIsEditable(campaign);
 
@@ -94,6 +97,7 @@ export class CampaignsService {
       keywords,
       nwcUrl,
       satsPerImpact,
+      budgetSats,
       endsAt: endsAtValue,
     } = updateCampaignDto;
 
@@ -103,6 +107,7 @@ export class CampaignsService {
       keywords === undefined &&
       nwcUrl === undefined &&
       satsPerImpact === undefined &&
+      budgetSats === undefined &&
       endsAtValue === undefined
     ) {
       throw new BadRequestException(
@@ -110,11 +115,25 @@ export class CampaignsService {
       );
     }
 
+    if (budgetSats !== undefined) {
+      const committedSats = campaign.reservedSats + campaign.spentSats;
+      if (budgetSats < committedSats) {
+        throw new BadRequestException(
+          `El presupuesto no puede ser menor que lo ya reservado o gastado (${committedSats} sats).`,
+        );
+      }
+    }
+
     const nextSatsPerImpact = satsPerImpact ?? campaign.satsPerImpact;
-    if (nwcUrl !== undefined || satsPerImpact !== undefined) {
+    const nextBudgetSats = budgetSats ?? campaign.budgetSats;
+    if (
+      nwcUrl !== undefined ||
+      satsPerImpact !== undefined ||
+      budgetSats !== undefined
+    ) {
       const walletUrl =
         nwcUrl ?? this.cryptoService.decrypt(campaign.nwcUrlEncrypted);
-      await this.validateWallet(walletUrl, nextSatsPerImpact);
+      await this.validateWallet(walletUrl, nextSatsPerImpact, nextBudgetSats);
 
       if (nwcUrl !== undefined) {
         campaign.nwcUrlEncrypted = this.cryptoService.encrypt(nwcUrl);
@@ -126,44 +145,51 @@ export class CampaignsService {
       campaign.productDescription = productDescription;
     if (keywords !== undefined) campaign.keywords = keywords;
     if (satsPerImpact !== undefined) campaign.satsPerImpact = satsPerImpact;
+    if (budgetSats !== undefined) campaign.budgetSats = budgetSats;
     if (endsAtValue !== undefined) {
       campaign.endsAt = this.getValidEndsAt(endsAtValue, campaign.createdAt);
     }
 
-    return this.campaignsRepository.save(campaign);
+    return this.toResponse(await this.campaignsRepository.save(campaign));
   }
 
-  async pause(id: string, companyId: string): Promise<Campaign> {
+  async pause(id: string, companyId: string): Promise<CampaignResponseDto> {
     const campaign = await this.findOwnedCampaign(id, companyId);
     await this.ensureCampaignIsNotExpired(campaign);
 
-    if (campaign.status === CampaignStatus.PAUSED) return campaign;
+    if (campaign.status === CampaignStatus.PAUSED) {
+      return this.toResponse(campaign);
+    }
     if (campaign.status !== CampaignStatus.ACTIVE) {
       throw new ConflictException('Solo se pueden pausar campanas activas.');
     }
 
     campaign.status = CampaignStatus.PAUSED;
-    return this.campaignsRepository.save(campaign);
+    return this.toResponse(await this.campaignsRepository.save(campaign));
   }
 
-  async resume(id: string, companyId: string): Promise<Campaign> {
+  async resume(id: string, companyId: string): Promise<CampaignResponseDto> {
     const campaign = await this.findOwnedCampaign(id, companyId);
     await this.ensureCampaignIsNotExpired(campaign);
 
-    if (campaign.status === CampaignStatus.ACTIVE) return campaign;
+    if (campaign.status === CampaignStatus.ACTIVE) {
+      return this.toResponse(campaign);
+    }
     if (campaign.status !== CampaignStatus.PAUSED) {
       throw new ConflictException('Solo se pueden reanudar campanas pausadas.');
     }
 
     campaign.status = CampaignStatus.ACTIVE;
-    return this.campaignsRepository.save(campaign);
+    return this.toResponse(await this.campaignsRepository.save(campaign));
   }
 
-  async remove(id: string, companyId: string): Promise<Campaign> {
+  async remove(id: string, companyId: string): Promise<CampaignResponseDto> {
     const campaign = await this.findOwnedCampaign(id, companyId);
     await this.ensureCampaignIsNotExpired(campaign);
 
-    if (campaign.status === CampaignStatus.CANCELLED) return campaign;
+    if (campaign.status === CampaignStatus.CANCELLED) {
+      return this.toResponse(campaign);
+    }
     if (campaign.status === CampaignStatus.COMPLETED) {
       throw new ConflictException(
         'No se puede cancelar una campana finalizada.',
@@ -171,7 +197,7 @@ export class CampaignsService {
     }
 
     campaign.status = CampaignStatus.CANCELLED;
-    return this.campaignsRepository.save(campaign);
+    return this.toResponse(await this.campaignsRepository.save(campaign));
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -183,6 +209,23 @@ export class CampaignsService {
       },
       { status: CampaignStatus.COMPLETED },
     );
+  }
+
+  private toResponse(campaign: Campaign): CampaignResponseDto {
+    return {
+      id: campaign.id,
+      companyId: campaign.companyId,
+      name: campaign.name,
+      productDescription: campaign.productDescription,
+      keywords: campaign.keywords,
+      satsPerImpact: campaign.satsPerImpact,
+      budgetSats: campaign.budgetSats,
+      reservedSats: campaign.reservedSats,
+      spentSats: campaign.spentSats,
+      status: campaign.status,
+      createdAt: campaign.createdAt,
+      endsAt: campaign.endsAt,
+    };
   }
 
   private async findOwnedCampaign(
@@ -251,6 +294,7 @@ export class CampaignsService {
   private async validateWallet(
     nwcUrl: string,
     satsPerImpact: number,
+    budgetSats: number,
   ): Promise<void> {
     if (!Number.isSafeInteger(satsPerImpact) || satsPerImpact < 1) {
       throw new BadRequestException(
@@ -258,23 +302,31 @@ export class CampaignsService {
       );
     }
 
-    let client: ReturnType<typeof createNwcClient> | undefined;
+    if (!Number.isSafeInteger(budgetSats) || budgetSats < 1) {
+      throw new BadRequestException(
+        'El presupuesto de la campana debe ser un entero positivo.',
+      );
+    }
+
+    const minimumRequiredSats = estimateImpactCostSats(satsPerImpact);
+    if (budgetSats < minimumRequiredSats) {
+      throw new BadRequestException(
+        `El presupuesto debe cubrir al menos un impacto (${minimumRequiredSats} sats).`,
+      );
+    }
+
+    let client: Awaited<ReturnType<typeof createNwcClient>> | undefined;
 
     try {
-      client = createNwcClient(nwcUrl);
+      client = await createNwcClient(nwcUrl);
       const response = await client.getBalance();
       const walletBalanceMsats = response.balance;
-      const minimumRequiredMsats = Math.ceil(
-        satsPerImpact * WALLET_RESERVE_MULTIPLIER * MSATS_PER_SAT,
-      );
+      const minimumRequiredMsats = minimumRequiredSats * MSATS_PER_SAT;
 
       if (
         !Number.isFinite(walletBalanceMsats) ||
         walletBalanceMsats < minimumRequiredMsats
       ) {
-        const minimumRequiredSats = Math.ceil(
-          minimumRequiredMsats / MSATS_PER_SAT,
-        );
         throw new BadRequestException(
           `Saldo insuficiente en la wallet. Requieres al menos ${minimumRequiredSats} sats.`,
         );

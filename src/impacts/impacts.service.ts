@@ -1,18 +1,30 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { QueryFailedError, Repository } from 'typeorm';
+import {
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import {
+  DataSource,
+  LessThanOrEqual,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { Impact, ImpactStatus } from './entities/impact.entity';
 
 export interface ReserveImpactInput {
   campaignId: string;
   targetPubkey: string;
   targetEventId: string;
+  reserveSats: number;
 }
 
 export interface CompleteImpactInput {
   status: ImpactStatus;
   satsCharged: number;
   platformFee: number;
+  preimage?: string;
+  commentEventId?: string;
 }
 
 export interface ImpactReservation {
@@ -20,46 +32,95 @@ export interface ImpactReservation {
   reserved: boolean;
 }
 
+export class BudgetExceededException extends ConflictException {
+  constructor() {
+    super('El presupuesto de la campana no permite este impacto.');
+  }
+}
+
+/**
+ * Un impacto para este mismo pubkey/evento ya esta reservado y en curso.
+ * A diferencia de BudgetExceededException (permanente), esto es
+ * transitorio: el trabajo debe reintentarse y, si el pending queda
+ * huerfano, el reconciliador lo cerrara a un estado final.
+ */
+export class ImpactPendingException extends Error {
+  constructor() {
+    super('El impacto ya esta siendo procesado.');
+  }
+}
+
 @Injectable()
 export class ImpactsService {
   constructor(
     @InjectRepository(Impact)
     private readonly impactsRepository: Repository<Impact>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
   ) {}
 
-  async hasImpactForUser(
-    campaignId: string,
-    targetPubkey: string,
-  ): Promise<boolean> {
-    const count = await this.impactsRepository.count({
-      where: { campaignId, targetPubkey },
-    });
-    return count > 0;
-  }
-
-  async findByCampaignAndTargetEvent(
-    campaignId: string,
-    targetEventId: string,
-  ): Promise<Impact | null> {
-    return this.impactsRepository.findOne({
-      where: { campaignId, targetEventId },
+  /**
+   * Impactos pending cuya reserva de pago quedo huerfana (proceso caido,
+   * timeout de wallet, etc.), listos para que el reconciliador los cierre.
+   */
+  async findStalePending(before: Date): Promise<Impact[]> {
+    return this.impactsRepository.find({
+      where: {
+        status: ImpactStatus.PENDING,
+        createdAt: LessThanOrEqual(before),
+      },
     });
   }
 
+  /**
+   * Reserva atómica: incrementa el gasto reservado de la campaña solo si
+   * cabe dentro del presupuesto, e inserta el impacto en la misma
+   * transacción. Si la campaña no tiene presupuesto suficiente, ninguna
+   * fila cambia. Si el impacto ya existe (colisión de índice único), la
+   * transacción hace rollback y la reserva de presupuesto se deshace.
+   */
   async reserveImpact(input: ReserveImpactInput): Promise<ImpactReservation> {
     try {
-      const impact = this.impactsRepository.create({
-        ...input,
-        status: ImpactStatus.PENDING,
-        satsCharged: 0,
-        platformFee: 0,
+      return await this.dataSource.transaction(async (manager) => {
+        const queryResult: unknown = await manager.query(
+          `UPDATE campaigns
+           SET reserved_sats = reserved_sats + $1
+           WHERE id = $2 AND reserved_sats + spent_sats + $1 <= budget_sats
+           RETURNING id`,
+          [input.reserveSats, input.campaignId],
+        );
+        // TypeORM/Postgres devuelve UPDATE ... RETURNING como
+        // [rows, affectedRows], mientras SELECT devuelve directamente rows.
+        // Normalizamos ambas formas antes de decidir si se consiguio reserva.
+        const rows: unknown[] = Array.isArray(queryResult)
+          ? Array.isArray(queryResult[0])
+            ? queryResult[0]
+            : queryResult
+          : [];
+
+        if (rows.length === 0) {
+          throw new BudgetExceededException();
+        }
+
+        const impact = manager.create(Impact, {
+          campaignId: input.campaignId,
+          targetPubkey: input.targetPubkey,
+          targetEventId: input.targetEventId,
+          status: ImpactStatus.PENDING,
+          reservedSats: input.reserveSats,
+          satsCharged: 0,
+          platformFee: 0,
+        });
+
+        return {
+          impact: await manager.save(impact),
+          reserved: true,
+        };
       });
-      return {
-        impact: await this.impactsRepository.save(impact),
-        reserved: true,
-      };
     } catch (error) {
-      if (!(error instanceof QueryFailedError)) {
+      if (error instanceof BudgetExceededException) throw error;
+
+      if (!this.isUniqueConstraintError(error)) {
         throw new InternalServerErrorException('Error al reservar el impacto.');
       }
 
@@ -70,32 +131,95 @@ export class ImpactsService {
         ],
       });
 
-      if (impact) {
-        return { impact, reserved: false };
+      if (!impact) {
+        throw new InternalServerErrorException(
+          'Error al registrar el impacto.',
+        );
       }
 
-      throw new InternalServerErrorException('Error al registrar el impacto.');
+      if (impact.status === ImpactStatus.PENDING) {
+        throw new ImpactPendingException();
+      }
+
+      return { impact, reserved: false };
     }
   }
 
+  /**
+   * Registra la invoice y el hash de pago justo antes de invocar
+   * payInvoice, para que el reconciliador pueda verificar el resultado
+   * real con la wallet si el proceso muere antes de completeImpact.
+   */
+  async recordPaymentAttempt(
+    impactId: string,
+    input: { bolt11: string; paymentHash: string },
+  ): Promise<void> {
+    await this.impactsRepository.update(
+      { id: impactId, status: ImpactStatus.PENDING },
+      {
+        bolt11: input.bolt11,
+        paymentHash: input.paymentHash,
+        paymentAttemptedAt: new Date(),
+      },
+    );
+  }
+
+  /**
+   * Libera la reserva de presupuesto de la campaña y confirma el gasto
+   * real (satsCharged puede diferir de la reserva por comisiones reales)
+   * en la misma transacción que cierra el impacto.
+   */
   async completeImpact(
     impactId: string,
     input: CompleteImpactInput,
   ): Promise<Impact> {
-    const result = await this.impactsRepository.update(
-      { id: impactId, status: ImpactStatus.PENDING },
-      input,
-    );
+    return this.dataSource.transaction(async (manager) => {
+      const impact = await manager.findOne(Impact, {
+        where: { id: impactId, status: ImpactStatus.PENDING },
+      });
 
-    if (!result.affected) {
-      throw new InternalServerErrorException(
-        'No se pudo completar la reserva del impacto.',
+      if (!impact) {
+        throw new InternalServerErrorException(
+          'No se pudo completar la reserva del impacto.',
+        );
+      }
+
+      await manager.query(
+        `UPDATE campaigns
+         SET reserved_sats = reserved_sats - $1, spent_sats = spent_sats + $2
+         WHERE id = $3`,
+        [impact.reservedSats, input.satsCharged, impact.campaignId],
       );
-    }
 
-    const impact = await this.impactsRepository.findOneByOrFail({
-      id: impactId,
+      const result = await manager.update(
+        Impact,
+        { id: impactId, status: ImpactStatus.PENDING },
+        {
+          status: input.status,
+          satsCharged: input.satsCharged,
+          platformFee: input.platformFee,
+          preimage: input.preimage ?? null,
+          commentEventId: input.commentEventId ?? null,
+        },
+      );
+
+      if (!result.affected) {
+        throw new InternalServerErrorException(
+          'No se pudo completar la reserva del impacto.',
+        );
+      }
+
+      return manager.findOneByOrFail(Impact, { id: impactId });
     });
-    return impact;
+  }
+
+  private isUniqueConstraintError(error: unknown): error is QueryFailedError {
+    return (
+      error instanceof QueryFailedError &&
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23505'
+    );
   }
 }

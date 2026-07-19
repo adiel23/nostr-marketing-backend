@@ -45,11 +45,35 @@ export class Impact {
   })
   status!: ImpactStatus;
 
+  // Monto reservado del presupuesto de la campaña al crear este impacto.
+  // Se libera de campaigns.reserved_sats al completar el impacto.
+  @Column({ name: 'reserved_sats', type: 'integer' })
+  reservedSats!: number;
+
   @Column({ name: 'sats_charged', type: 'integer' })
   satsCharged!: number;
 
   @Column({ name: 'platform_fee', type: 'integer' })
   platformFee!: number;
+
+  // Invoice y hash de pago, guardados justo antes de invocar payInvoice
+  // para poder reconciliar el estado real con la wallet si el proceso
+  // cae entre el pago y el cierre del impacto.
+  @Column({ name: 'bolt11', type: 'text', nullable: true })
+  bolt11!: string | null;
+
+  @Column({ name: 'payment_hash', type: 'varchar', nullable: true })
+  paymentHash!: string | null;
+
+  @Column({ name: 'preimage', type: 'varchar', nullable: true })
+  preimage!: string | null;
+
+  @Column({ name: 'payment_attempted_at', type: 'timestamp', nullable: true })
+  paymentAttemptedAt!: Date | null;
+
+  // Id del comentario promocional realmente publicado para este impacto.
+  @Column({ name: 'comment_event_id', type: 'varchar', nullable: true })
+  commentEventId!: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt!: Date;

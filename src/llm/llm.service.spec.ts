@@ -68,6 +68,45 @@ describe('LlmService', () => {
     expect(result.confidence).toBeGreaterThan(0.9);
   });
 
+  it('propagates transient network/timeout failures instead of hiding them as no-match', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+
+    const sendMock = jest.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+    (OpenRouter as jest.Mock).mockImplementation(() => ({
+      chat: { send: sendMock },
+    }));
+
+    await expect(
+      service.evaluateIntent({
+        postContent: 'hola',
+        campaignName: 'campaña',
+        productDescription: 'producto',
+      }),
+    ).rejects.toThrow('ETIMEDOUT');
+  });
+
+  it('bounds the OpenRouter request with a timeout', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+
+    const sendMock = jest.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"match":false,"confidence":0}' } }],
+    });
+    (OpenRouter as jest.Mock).mockImplementation(() => ({
+      chat: { send: sendMock },
+    }));
+
+    await service.evaluateIntent({
+      postContent: 'hola',
+      campaignName: 'campaña',
+      productDescription: 'producto',
+    });
+
+    const calls = sendMock.mock.calls as unknown as Array<
+      [unknown, { timeoutMs?: number }]
+    >;
+    expect(calls[0]?.[1]?.timeoutMs).toBeGreaterThan(0);
+  });
+
   it('should return a safe fallback when the SDK response is empty or invalid', async () => {
     process.env.OPENROUTER_API_KEY = 'test-key';
 

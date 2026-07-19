@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OpenRouter } from '@openrouter/sdk';
+import { isRecord } from 'src/common/type-guards.util';
 
 export interface EvaluateIntentInput {
   postContent: string;
@@ -14,6 +15,7 @@ export interface EvaluateIntentResult {
 }
 
 const MINIMUM_MATCH_CONFIDENCE = 0.8;
+const LLM_REQUEST_TIMEOUT_MS = 15_000;
 
 interface ChatCompletionResponse {
   choices?: Array<{
@@ -72,35 +74,41 @@ ${input.productDescription}
       appTitle: 'nostr-marketing-backend', // Optional. Site title for rankings on openrouter.ai.
     });
 
+    let result: unknown;
     try {
-      const result = await client.chat.send({
-        chatRequest: {
-          model,
-          stream: false,
-          messages: [
-            {
-              role: 'system',
-              content: 'Responde únicamente con JSON válido.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
+      result = await client.chat.send(
+        {
+          chatRequest: {
+            model,
+            stream: false,
+            messages: [
+              {
+                role: 'system',
+                content: 'Responde únicamente con JSON válido.',
+              },
+              {
+                role: 'user',
+                content: prompt,
+              },
+            ],
+          },
         },
-      });
-
-      const completion = result as unknown as ChatCompletionResponse;
-      const content = completion.choices?.[0]?.message?.content;
-      return this.parseResult(typeof content === 'string' ? content : '{}');
+        { timeoutMs: LLM_REQUEST_TIMEOUT_MS },
+      );
     } catch (error) {
-      this.logger.error('Error al consultar OpenRouter', error);
-      return {
-        match: false,
-        reason: 'No se pudo interpretar la respuesta del modelo',
-        confidence: 0,
-      };
+      // Fallo de red/timeout/infra: es transitorio, no una senal de "sin
+      // interes". Se relanza para que BullMQ reintente el trabajo en vez
+      // de descartar el match silenciosamente.
+      this.logger.error(
+        'Error al consultar OpenRouter; se reintentara el trabajo.',
+        error,
+      );
+      throw error;
     }
+
+    const completion = result as ChatCompletionResponse;
+    const content = completion.choices?.[0]?.message?.content;
+    return this.parseResult(typeof content === 'string' ? content : '{}');
   }
 
   private parseResult(content: string): EvaluateIntentResult {
@@ -120,7 +128,7 @@ ${input.productDescription}
       const jsonText = cleaned.slice(start, end + 1);
       const parsed: unknown = JSON.parse(jsonText);
 
-      if (!this.isRecord(parsed)) {
+      if (!isRecord(parsed)) {
         throw new Error('Model response did not produce a JSON object');
       }
 
@@ -143,10 +151,6 @@ ${input.productDescription}
         confidence: 0,
       };
     }
-  }
-
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
   private getConfidence(value: unknown): number {
