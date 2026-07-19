@@ -1,10 +1,10 @@
 import { Campaign } from 'src/campaigns/entities/campaign.entity';
-import { 
-  Entity, 
-  PrimaryGeneratedColumn, 
-  Column, 
-  CreateDateColumn, 
-  OneToMany
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  OneToMany,
 } from 'typeorm';
 
 @Entity({ name: 'companies' }) // Puedes cambiar 'users' por el nombre real de tu tabla si es diferente
@@ -24,10 +24,10 @@ export class Company {
   @Column({ name: 'password_hash', type: 'varchar', nullable: false })
   passwordHash!: string;
 
-  @CreateDateColumn({ 
-    name: 'created_at', 
-    type: 'timestamp', 
-    default: () => 'CURRENT_TIMESTAMP' 
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
   })
   createdAt!: Date;
 }

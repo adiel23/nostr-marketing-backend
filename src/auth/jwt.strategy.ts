@@ -1,7 +1,8 @@
 // src/auth/jwt.strategy.ts
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { getJwtSecret } from 'src/config/environment';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -10,12 +11,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Extrae el token del header como 'Authorization: Bearer <token>'
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false, // Rechaza el token si ya expiró
-      secretOrKey: 'MI_CLAVE_SECRETA_SUPER_SEGURA', // Debe ser la misma clave del módulo
+      secretOrKey: getJwtSecret(),
     });
   }
 
   // Este método se ejecuta automáticamente si el token es válido
-  async validate(payload: any) {
+  validate(payload: { sub: string; email: string }) {
     // Lo que devuelvas aquí se inyectará automáticamente en el objeto `req.user`
     return { id: payload.sub, email: payload.email };
   }

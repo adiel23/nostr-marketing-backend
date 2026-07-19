@@ -1,10 +1,12 @@
-import { 
-  IsString, 
-  IsNotEmpty, 
-  IsArray, 
-  IsInt, 
-  Min, 
-  IsDateString 
+import {
+  IsString,
+  IsNotEmpty,
+  IsArray,
+  ArrayNotEmpty,
+  Matches,
+  IsInt,
+  Min,
+  IsDateString,
 } from 'class-validator';
 
 export class CreateCampaignDto {
@@ -17,8 +19,10 @@ export class CreateCampaignDto {
   productDescription!: string;
 
   @IsArray()
+  @ArrayNotEmpty()
   @IsString({ each: true })
-  @IsNotEmpty()
+  @IsNotEmpty({ each: true })
+  @Matches(/\S/, { each: true })
   keywords!: string[];
 
   @IsString()
@@ -26,7 +30,7 @@ export class CreateCampaignDto {
   nwcUrl!: string;
 
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsNotEmpty()
   satsPerImpact!: number;
 

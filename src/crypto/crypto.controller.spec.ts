@@ -8,7 +8,15 @@ describe('CryptoController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [CryptoController],
-      providers: [CryptoService],
+      providers: [
+        {
+          provide: CryptoService,
+          useValue: {
+            encrypt: jest.fn(),
+            decrypt: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     controller = module.get<CryptoController>(CryptoController);

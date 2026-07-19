@@ -10,6 +10,6 @@ import { CryptoModule } from 'src/crypto/crypto.module';
   imports: [AuthModule, TypeOrmModule.forFeature([Campaign]), CryptoModule],
   controllers: [CampaignsController],
   providers: [CampaignsService],
-  exports: [CampaignsService]
+  exports: [CampaignsService],
 })
 export class CampaignsModule {}

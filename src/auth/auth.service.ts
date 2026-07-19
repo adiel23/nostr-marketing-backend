@@ -8,14 +8,17 @@ import { LoginDto } from './dto/login.dto';
 export class AuthService {
   constructor(
     private readonly jwtService: JwtService,
-    private readonly companiesService: CompaniesService
+    private readonly companiesService: CompaniesService,
   ) {}
 
   // 1. Validar al usuario
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const company = await this.companiesService.validateCompany(email, password);
+    const company = await this.companiesService.validateCompany(
+      email,
+      password,
+    );
 
     if (company) {
       const payload = { email: company.email, sub: company.id };

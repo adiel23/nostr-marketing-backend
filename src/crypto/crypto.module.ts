@@ -5,6 +5,6 @@ import { CryptoController } from './crypto.controller';
 @Module({
   controllers: [CryptoController],
   providers: [CryptoService],
-  exports: [CryptoService]
+  exports: [CryptoService],
 })
 export class CryptoModule {}

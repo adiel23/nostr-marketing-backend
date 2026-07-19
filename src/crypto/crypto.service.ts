@@ -10,8 +10,10 @@ export class CryptoService {
   constructor() {
     // Convierte la clave hex del .env a un Buffer de 32 bytes
     const secret = process.env.ENCRYPTION_KEY;
-    if (!secret || secret.length !== 64) {
-      throw new Error('ENCRYPTION_KEY debe ser una cadena hex de 64 caracteres (32 bytes).');
+    if (!secret || !/^[a-f0-9]{64}$/i.test(secret)) {
+      throw new Error(
+        'ENCRYPTION_KEY debe ser una cadena hex de 64 caracteres (32 bytes).',
+      );
     }
     this.key = Buffer.from(secret, 'hex');
   }

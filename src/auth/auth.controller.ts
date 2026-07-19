@@ -4,7 +4,7 @@ import { LoginDto } from './dto/login.dto';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {} 
+  constructor(private readonly authService: AuthService) {}
   // 1. Ruta pública para iniciar sesión y obtener el token
   @Post('login')
   async login(@Body() loginDto: LoginDto) {

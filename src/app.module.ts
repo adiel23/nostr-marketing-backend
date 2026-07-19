@@ -1,46 +1,94 @@
-import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { NostrModule } from './nostr/nostr.module';
-import { CompaniesModule } from './companies/companies.module';
-import {TypeOrmModule} from "@nestjs/typeorm";
-import { Company } from './companies/entities/company.entity';
-import { CampaignsModule } from './campaigns/campaigns.module';
-import { AuthModule } from './auth/auth.module';
-import { Campaign } from './campaigns/entities/campaign.entity';
-import { Impact } from './impacts/entities/impact.entity';
-import { CryptoModule } from './crypto/crypto.module';
-import {ScheduleModule} from "@nestjs/schedule";
-import { LlmModule } from './llm/llm.module';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
+import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { timingSafeEqual } from 'crypto';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { Campaign } from './campaigns/entities/campaign.entity';
+import { CompaniesModule } from './companies/companies.module';
+import { Company } from './companies/entities/company.entity';
+import { databaseEnvironment } from './config/environment';
+import { CryptoModule } from './crypto/crypto.module';
+import { Impact } from './impacts/entities/impact.entity';
+import { LlmModule } from './llm/llm.module';
+import { NostrModule } from './nostr/nostr.module';
+
+function constantTimeEquals(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+
+  return (
+    leftBuffer.length === rightBuffer.length &&
+    timingSafeEqual(leftBuffer, rightBuffer)
+  );
+}
+
+function getBullBoardMiddleware() {
+  if (process.env.BULL_BOARD_ENABLED !== 'true') {
+    return (_req: unknown, res: { sendStatus(status: number): void }) => {
+      res.sendStatus(404);
+    };
+  }
+
+  const username = process.env.BULL_BOARD_USERNAME;
+  const password = process.env.BULL_BOARD_PASSWORD;
+  if (!username || !password) {
+    throw new Error(
+      'BULL_BOARD_USERNAME y BULL_BOARD_PASSWORD son obligatorios cuando BULL_BOARD_ENABLED=true.',
+    );
+  }
+
+  const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  return (
+    req: { headers: { authorization?: string } },
+    res: {
+      setHeader(name: string, value: string): void;
+      sendStatus(status: number): void;
+    },
+    next: () => void,
+  ) => {
+    if (
+      !constantTimeEquals(
+        req.headers.authorization ?? '',
+        expectedAuthorization,
+      )
+    ) {
+      res.setHeader('WWW-Authenticate', 'Basic realm="Bull Board"');
+      res.sendStatus(401);
+      return;
+    }
+
+    next();
+  };
+}
 
 @Module({
   imports: [
-    NostrModule, 
-    CompaniesModule, 
+    NostrModule,
+    CompaniesModule,
     ScheduleModule.forRoot(),
-    // Configuración global de la interfaz web de colas
     BullBoardModule.forRoot({
-      route: '/queues',             // URL donde abrirás el panel
+      route: '/queues',
       adapter: ExpressAdapter,
+      middleware: getBullBoardMiddleware(),
     }),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: 'postgres_db',
-      port: 5432,
-      username: 'root',
-      password: '1234',
-      database: 'nostr_marketing',
+      ...databaseEnvironment,
       entities: [Company, Campaign, Impact],
-      synchronize: false, 
-      migrations: [__dirname + '/migrations/*{.ts,.js}'], // 2. Dónde buscará Nest las migraciones al arrancar
-      migrationsRun: true, // 3. Opcional: Hace que Nest corra las migraciones pendientes automáticamente al iniciar la ap
+      synchronize: false,
+      migrations: [__dirname + '/migrations/*{.ts,.js}'],
+      migrationsRun: true,
     }),
     CampaignsModule,
     AuthModule,
     CryptoModule,
-    LlmModule],
+    LlmModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
