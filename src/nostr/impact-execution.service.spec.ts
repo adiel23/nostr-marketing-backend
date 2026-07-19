@@ -11,7 +11,7 @@ jest.mock('src/wallet/wallet.service', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { ImpactExecutionService } from './impact-execution.service';
 import { CampaignsService } from 'src/campaigns/campaigns.service';
 import { ImpactsService } from 'src/impacts/impacts.service';
@@ -27,9 +27,8 @@ describe('ImpactExecutionService', () => {
     findById: jest.fn(),
   };
   const impactsService = {
-    findByTargetEventId: jest.fn(),
-    hasImpactForUser: jest.fn(),
-    createImpact: jest.fn(),
+    reserveImpact: jest.fn(),
+    completeImpact: jest.fn(),
   };
   const nostrPublisher = {
     publishComment: jest.fn(),
@@ -56,6 +55,7 @@ describe('ImpactExecutionService', () => {
     nwcUrlEncrypted: 'encrypted-url',
     satsPerImpact: 100,
     status: CampaignStatus.ACTIVE,
+    endsAt: new Date(Date.now() + 60_000),
   };
 
   beforeEach(async () => {
@@ -73,13 +73,18 @@ describe('ImpactExecutionService', () => {
 
     service = module.get(ImpactExecutionService);
 
-    impactsService.findByTargetEventId.mockResolvedValue(null);
-    impactsService.hasImpactForUser.mockResolvedValue(false);
     campaignsService.findById.mockResolvedValue(campaign);
     nostrPublisher.publishComment.mockResolvedValue({ eventId: 'comment-1' });
-    impactsService.createImpact.mockImplementation((input) =>
-      Promise.resolve({ id: 'impact-1', ...input }),
+    impactsService.reserveImpact.mockResolvedValue({
+      impact: { id: 'impact-1', status: ImpactStatus.PENDING },
+      reserved: true,
+    });
+    impactsService.completeImpact.mockImplementation(
+      (id: string, input: Record<string, unknown>) =>
+        Promise.resolve({ id, ...input }),
     );
+    campaign.status = CampaignStatus.ACTIVE;
+    campaign.endsAt = new Date(Date.now() + 60_000);
   });
 
   it('registra full_success cuando el zap se procesa correctamente', async () => {
@@ -98,10 +103,12 @@ describe('ImpactExecutionService', () => {
       targetEventId: jobData.eventId,
       amountSats: campaign.satsPerImpact,
     });
-    expect(impactsService.createImpact).toHaveBeenCalledWith({
+    expect(impactsService.reserveImpact).toHaveBeenCalledWith({
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
+    });
+    expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-1', {
       status: ImpactStatus.FULL_SUCCESS,
       satsCharged: 103,
       platformFee: 2,
@@ -119,10 +126,7 @@ describe('ImpactExecutionService', () => {
 
     const result = await service.executeApprovedImpact(jobData);
 
-    expect(impactsService.createImpact).toHaveBeenCalledWith({
-      campaignId: campaign.id,
-      targetPubkey: jobData.pubkey,
-      targetEventId: jobData.eventId,
+    expect(impactsService.completeImpact).toHaveBeenCalledWith('impact-1', {
       status: ImpactStatus.COMMENT_ONLY,
       satsCharged: 2,
       platformFee: 2,
@@ -137,5 +141,28 @@ describe('ImpactExecutionService', () => {
     await expect(service.executeApprovedImpact(jobData)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('no publica ni paga una campaña pausada después de encolar el trabajo', async () => {
+    campaign.status = CampaignStatus.PAUSED;
+
+    await expect(service.executeApprovedImpact(jobData)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(nostrPublisher.publishComment).not.toHaveBeenCalled();
+    expect(walletService.sendZap).not.toHaveBeenCalled();
+  });
+
+  it('no repite efectos externos cuando la reserva ya existe', async () => {
+    impactsService.reserveImpact.mockResolvedValue({
+      impact: { id: 'impact-1', status: ImpactStatus.FULL_SUCCESS },
+      reserved: false,
+    });
+
+    const result = await service.executeApprovedImpact(jobData);
+
+    expect(result.zapSent).toBe(true);
+    expect(nostrPublisher.publishComment).not.toHaveBeenCalled();
+    expect(walletService.sendZap).not.toHaveBeenCalled();
   });
 });

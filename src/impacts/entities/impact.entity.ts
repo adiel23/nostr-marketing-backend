@@ -10,12 +10,18 @@ import {
 } from 'typeorm';
 
 export enum ImpactStatus {
+  PENDING = 'pending',
   FULL_SUCCESS = 'full_success',
   COMMENT_ONLY = 'comment_only',
 }
 
 @Entity({ name: 'impacts' })
-@Index('idx_impacts_campaign_pubkey', ['campaignId', 'targetPubkey'])
+@Index('uq_impacts_campaign_pubkey', ['campaignId', 'targetPubkey'], {
+  unique: true,
+})
+@Index('uq_impacts_campaign_event', ['campaignId', 'targetEventId'], {
+  unique: true,
+})
 export class Impact {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -30,7 +36,7 @@ export class Impact {
   @Column({ name: 'target_pubkey', type: 'varchar' })
   targetPubkey!: string;
 
-  @Column({ name: 'target_event_id', type: 'varchar', unique: true })
+  @Column({ name: 'target_event_id', type: 'varchar' })
   targetEventId!: string;
 
   @Column({

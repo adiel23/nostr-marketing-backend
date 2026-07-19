@@ -1,5 +1,11 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { CampaignsService } from 'src/campaigns/campaigns.service';
+import { CampaignStatus } from 'src/campaigns/entities/campaign.entity';
 import { calculatePlatformFee } from 'src/common/fees.util';
 import { CampaignJobData } from './nostr.service';
 import { NostrPublisher } from './nostr.publisher';
@@ -25,31 +31,40 @@ export class ImpactExecutionService {
     private readonly walletService: WalletService,
   ) {}
 
-  async executeApprovedImpact(jobData: CampaignJobData): Promise<ImpactExecutionResult> {
-    const existingImpact = await this.impactsService.findByTargetEventId(jobData.eventId);
-    if (existingImpact) {
-      this.logger.warn(`Impacto ya registrado para evento ${jobData.eventId}`);
-      return {
-        status: existingImpact.status,
-        impactId: existingImpact.id,
-        commentEventId: jobData.eventId,
-        zapSent: existingImpact.status === ImpactStatus.FULL_SUCCESS,
-      };
-    }
-
-    const alreadyImpacted = await this.impactsService.hasImpactForUser(
-      jobData.campaignId,
-      jobData.pubkey,
-    );
-    if (alreadyImpacted) {
-      throw new Error(
-        `El usuario ${jobData.pubkey} ya fue impactado por la campaña ${jobData.campaignId}`,
+  async executeApprovedImpact(
+    jobData: CampaignJobData,
+  ): Promise<ImpactExecutionResult> {
+    const campaign = await this.campaignsService.findById(jobData.campaignId);
+    if (!campaign) {
+      throw new NotFoundException(
+        `Campaña ${jobData.campaignId} no encontrada`,
       );
     }
 
-    const campaign = await this.campaignsService.findById(jobData.campaignId);
-    if (!campaign) {
-      throw new NotFoundException(`Campaña ${jobData.campaignId} no encontrada`);
+    if (
+      campaign.status !== CampaignStatus.ACTIVE ||
+      campaign.endsAt.getTime() <= Date.now()
+    ) {
+      throw new ConflictException('La campana no esta activa o ya finalizo.');
+    }
+
+    const reservation = await this.impactsService.reserveImpact({
+      campaignId: campaign.id,
+      targetPubkey: jobData.pubkey,
+      targetEventId: jobData.eventId,
+    });
+
+    if (!reservation.reserved) {
+      if (reservation.impact.status === ImpactStatus.PENDING) {
+        throw new ConflictException('El impacto ya está siendo procesado.');
+      }
+
+      return {
+        status: reservation.impact.status,
+        impactId: reservation.impact.id,
+        commentEventId: jobData.eventId,
+        zapSent: reservation.impact.status === ImpactStatus.FULL_SUCCESS,
+      };
     }
 
     const platformFee = calculatePlatformFee(campaign.satsPerImpact);
@@ -58,11 +73,12 @@ export class ImpactExecutionService {
       campaign.productDescription,
     );
 
-    const { eventId: commentEventId } = await this.nostrPublisher.publishComment({
-      targetEventId: jobData.eventId,
-      targetPubkey: jobData.pubkey,
-      content: promotionalContent,
-    });
+    const { eventId: commentEventId } =
+      await this.nostrPublisher.publishComment({
+        targetEventId: jobData.eventId,
+        targetPubkey: jobData.pubkey,
+        content: promotionalContent,
+      });
 
     const zapResult = await this.walletService.sendZap({
       encryptedNwcUrl: campaign.nwcUrlEncrypted,
@@ -71,21 +87,22 @@ export class ImpactExecutionService {
       amountSats: campaign.satsPerImpact,
     });
 
-    const status =
-      zapResult.success ? ImpactStatus.FULL_SUCCESS : ImpactStatus.COMMENT_ONLY;
+    const status = zapResult.success
+      ? ImpactStatus.FULL_SUCCESS
+      : ImpactStatus.COMMENT_ONLY;
 
     const satsCharged = zapResult.success
       ? campaign.satsPerImpact + platformFee + zapResult.feesPaid
       : platformFee;
 
-    const impact = await this.impactsService.createImpact({
-      campaignId: campaign.id,
-      targetPubkey: jobData.pubkey,
-      targetEventId: jobData.eventId,
-      status,
-      satsCharged,
-      platformFee,
-    });
+    const impact = await this.impactsService.completeImpact(
+      reservation.impact.id,
+      {
+        status,
+        satsCharged,
+        platformFee,
+      },
+    );
 
     if (!zapResult.success) {
       this.logger.warn(
@@ -101,7 +118,10 @@ export class ImpactExecutionService {
     };
   }
 
-  private buildPromotionalComment(campaignName: string, productDescription: string): string {
+  private buildPromotionalComment(
+    campaignName: string,
+    productDescription: string,
+  ): string {
     return `${campaignName}: ${productDescription}`;
   }
 }

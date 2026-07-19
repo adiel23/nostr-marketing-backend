@@ -31,7 +31,8 @@ describe('LlmService', () => {
       choices: [
         {
           message: {
-            content: '{"match": true, "reason": "El usuario busca una wallet Bitcoin segura", "confidence": 0.92}',
+            content:
+              '{"match": true, "reason": "El usuario busca una wallet Bitcoin segura", "confidence": 0.92}',
           },
         },
       ],
@@ -47,14 +48,21 @@ describe('LlmService', () => {
       productDescription: 'Wallet Bitcoin segura para almacenar sats',
     });
 
-    expect(sendMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatRequest: expect.objectContaining({
-          model: 'test-model',
-          messages: expect.any(Array),
-        }),
-      }),
-    );
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const calls = sendMock.mock.calls as unknown as Array<
+      [
+        {
+          chatRequest: { model: string; messages: unknown[] };
+        },
+      ]
+    >;
+    const request = calls[0]?.[0];
+    expect(request).toBeDefined();
+    if (!request) {
+      throw new Error('Expected OpenRouter request');
+    }
+    expect(request.chatRequest.model).toBe('test-model');
+    expect(request.chatRequest.messages).toHaveLength(2);
     expect(result.match).toBe(true);
     expect(result.reason).toContain('wallet Bitcoin');
     expect(result.confidence).toBeGreaterThan(0.9);
@@ -80,5 +88,65 @@ describe('LlmService', () => {
     expect(result.match).toBe(false);
     expect(result.reason).toContain('No se pudo interpretar');
     expect(result.confidence).toBe(0);
+  });
+
+  it('requires a boolean match and a confidence at or above the safety threshold', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+
+    const sendMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content:
+                '{"match":"true", "reason":"string truthy", "confidence":0.99}',
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content:
+                '{"match":true, "reason":"low confidence", "confidence":0.79}',
+            },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content:
+                '{"match":true, "reason":"invalid confidence", "confidence":1.2}',
+            },
+          },
+        ],
+      });
+
+    (OpenRouter as jest.Mock).mockImplementation(() => ({
+      chat: { send: sendMock },
+    }));
+
+    const input = {
+      postContent: 'hola',
+      campaignName: 'campaÃ±a',
+      productDescription: 'producto',
+    };
+
+    await expect(service.evaluateIntent(input)).resolves.toMatchObject({
+      match: false,
+      confidence: 0.99,
+    });
+    await expect(service.evaluateIntent(input)).resolves.toMatchObject({
+      match: false,
+      confidence: 0.79,
+    });
+    await expect(service.evaluateIntent(input)).resolves.toMatchObject({
+      match: false,
+      confidence: 0,
+    });
   });
 });

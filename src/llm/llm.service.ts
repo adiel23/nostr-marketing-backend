@@ -13,16 +13,30 @@ export interface EvaluateIntentResult {
   confidence: number;
 }
 
+const MINIMUM_MATCH_CONFIDENCE = 0.8;
+
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: unknown;
+    };
+  }>;
+}
+
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
 
-  async evaluateIntent(input: EvaluateIntentInput): Promise<EvaluateIntentResult> {
+  async evaluateIntent(
+    input: EvaluateIntentInput,
+  ): Promise<EvaluateIntentResult> {
     const apiKey = process.env.OPENROUTER_API_KEY;
     const model = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat';
 
     if (!apiKey) {
-      this.logger.warn('OPENROUTER_API_KEY no configurada. Retornando fallback sin match.');
+      this.logger.warn(
+        'OPENROUTER_API_KEY no configurada. Retornando fallback sin match.',
+      );
       return {
         match: false,
         reason: 'No OpenRouter API key configured',
@@ -53,15 +67,16 @@ ${input.productDescription}
 `;
 
     const client = new OpenRouter({
-        apiKey,
-        httpReferer: 'http://localhost:3000', // Optional. Site URL for rankings on openrouter.ai.
-        appTitle: 'nostr-marketing-backend', // Optional. Site title for rankings on openrouter.ai.
+      apiKey,
+      httpReferer: 'http://localhost:3000', // Optional. Site URL for rankings on openrouter.ai.
+      appTitle: 'nostr-marketing-backend', // Optional. Site title for rankings on openrouter.ai.
     });
 
     try {
       const result = await client.chat.send({
         chatRequest: {
           model,
+          stream: false,
           messages: [
             {
               role: 'system',
@@ -75,8 +90,9 @@ ${input.productDescription}
         },
       });
 
-      const content = result?.choices?.[0]?.message?.content ?? '{}';
-      return this.parseResult(content);
+      const completion = result as unknown as ChatCompletionResponse;
+      const content = completion.choices?.[0]?.message?.content;
+      return this.parseResult(typeof content === 'string' ? content : '{}');
     } catch (error) {
       this.logger.error('Error al consultar OpenRouter', error);
       return {
@@ -102,24 +118,43 @@ ${input.productDescription}
       }
 
       const jsonText = cleaned.slice(start, end + 1);
-      const parsed = JSON.parse(jsonText);
+      const parsed: unknown = JSON.parse(jsonText);
 
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      if (!this.isRecord(parsed)) {
         throw new Error('Model response did not produce a JSON object');
       }
 
+      const confidence = this.getConfidence(parsed.confidence);
+
       return {
-        match: Boolean(parsed.match),
-        reason: String(parsed.reason ?? 'Sin explicación'),
-        confidence: Number(parsed.confidence ?? 0),
+        match: parsed.match === true && confidence >= MINIMUM_MATCH_CONFIDENCE,
+        reason:
+          typeof parsed.reason === 'string' ? parsed.reason : 'Sin explicación',
+        confidence,
       };
     } catch (error) {
-      this.logger.warn('Respuesta del modelo sin JSON válido. Usando fallback.', error);
+      this.logger.warn(
+        'Respuesta del modelo sin JSON válido. Usando fallback.',
+        error,
+      );
       return {
         match: false,
         reason: 'No se pudo interpretar la respuesta del modelo',
         confidence: 0,
       };
     }
+  }
+
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private getConfidence(value: unknown): number {
+    return typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= 1
+      ? value
+      : 0;
   }
 }
