@@ -37,6 +37,23 @@ export const redisEnvironment = {
   port: readPort('REDIS_PORT', 6379),
 };
 
+const MIN_JWT_SECRET_BYTES = 32;
+const MIN_JWT_SECRET_UNIQUE_CHARS = 8;
+
 export function getJwtSecret(): string {
-  return readRequiredEnvironment('JWT_SECRET');
+  const secret = readRequiredEnvironment('JWT_SECRET');
+
+  if (Buffer.byteLength(secret, 'utf8') < MIN_JWT_SECRET_BYTES) {
+    throw new Error(
+      `JWT_SECRET debe tener al menos ${MIN_JWT_SECRET_BYTES} bytes de longitud.`,
+    );
+  }
+
+  if (new Set(secret).size < MIN_JWT_SECRET_UNIQUE_CHARS) {
+    throw new Error(
+      'JWT_SECRET no tiene suficiente variedad de caracteres para ser un secreto seguro.',
+    );
+  }
+
+  return secret;
 }

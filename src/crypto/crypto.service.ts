@@ -1,6 +1,7 @@
 // crypto.service.ts
 import { Injectable } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { isHex64 } from 'src/common/type-guards.util';
 
 @Injectable()
 export class CryptoService {
@@ -10,7 +11,7 @@ export class CryptoService {
   constructor() {
     // Convierte la clave hex del .env a un Buffer de 32 bytes
     const secret = process.env.ENCRYPTION_KEY;
-    if (!secret || !/^[a-f0-9]{64}$/i.test(secret)) {
+    if (!secret || !isHex64(secret)) {
       throw new Error(
         'ENCRYPTION_KEY debe ser una cadena hex de 64 caracteres (32 bytes).',
       );

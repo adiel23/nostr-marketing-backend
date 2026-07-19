@@ -10,7 +10,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { type Event, verifyEvent } from 'nostr-tools/pure';
+import { isHex64, isHex128 } from 'src/common/type-guards.util';
 import { getPlatformPublicKey } from './nostr-keys.util';
+import { NOSTR_KIND_TEXT_NOTE } from './nostr.constants';
 
 const MAX_RELAY_MESSAGE_BYTES = 16 * 1024;
 const MAX_EVENT_AGE_SECONDS = 24 * 60 * 60;
@@ -41,10 +43,10 @@ function isNostrEvent(value: unknown): value is Event {
     value !== null &&
     'id' in value &&
     typeof value.id === 'string' &&
-    /^[a-f0-9]{64}$/i.test(value.id) &&
+    isHex64(value.id) &&
     'pubkey' in value &&
     typeof value.pubkey === 'string' &&
-    /^[a-f0-9]{64}$/i.test(value.pubkey) &&
+    isHex64(value.pubkey) &&
     'content' in value &&
     typeof value.content === 'string' &&
     'created_at' in value &&
@@ -53,7 +55,7 @@ function isNostrEvent(value: unknown): value is Event {
     Number.isSafeInteger(value.kind) &&
     'sig' in value &&
     typeof value.sig === 'string' &&
-    /^[a-f0-9]{128}$/i.test(value.sig) &&
+    isHex128(value.sig) &&
     'tags' in value &&
     Array.isArray(value.tags) &&
     value.tags.every(
@@ -170,7 +172,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
 
     // Queremos notas de texto (kind: 1), limitadas a las últimas 5
     const filtro = {
-      kinds: [1],
+      kinds: [NOSTR_KIND_TEXT_NOTE],
       limit: 5,
     };
 
@@ -214,7 +216,7 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
       }
 
       if (
-        event.kind !== 1 ||
+        event.kind !== NOSTR_KIND_TEXT_NOTE ||
         event.content.length < 10 ||
         event.content.length > 1000 ||
         !hasAcceptableTimestamp(event.created_at) ||
@@ -303,17 +305,6 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
       removeOnComplete: { age: JOB_DEDUP_RETENTION_SECONDS },
       removeOnFail: { age: JOB_DEDUP_RETENTION_SECONDS },
     });
-  }
-
-  // Método para publicar tus propias notas desde cualquier parte de tu app
-  public enviarEvento(signedEvent: unknown) {
-    // Formato estricto Nostr para publicar: ["EVENT", <event_object>]
-    const message = JSON.stringify(['EVENT', signedEvent]);
-    if (this.ws?.readyState === WebSocket.OPEN && !this.isShuttingDown) {
-      this.ws.send(message);
-    } else {
-      this.logger.warn('No se pudo enviar; el socket no está abierto.');
-    }
   }
 
   onModuleDestroy() {

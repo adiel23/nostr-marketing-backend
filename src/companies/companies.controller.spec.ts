@@ -12,7 +12,7 @@ describe('CompaniesController', () => {
     update: jest.fn(),
     remove: jest.fn(),
   };
-  const request = { user: { id: 'company-id' } };
+  const request = { user: { id: 'company-id', email: 'company@example.test' } };
 
   beforeEach(async () => {
     jest.clearAllMocks();

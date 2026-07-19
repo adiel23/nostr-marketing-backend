@@ -1,8 +1,8 @@
 services:
   postgres_e2e:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     ports:
-      - '55432:5432'
+      - '127.0.0.1:55432:5432'
     environment:
       POSTGRES_USER: e2e_user
       POSTGRES_PASSWORD: e2e_password
@@ -17,9 +17,9 @@ services:
       retries: 30
 
   redis_e2e:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
-      - '56379:6379'
+      - '127.0.0.1:56379:6379'
     volumes:
       - redis_e2e_data:/data
     healthcheck:

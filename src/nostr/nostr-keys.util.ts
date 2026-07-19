@@ -1,5 +1,6 @@
 import { decode } from 'nostr-tools/nip19';
 import { getPublicKey } from 'nostr-tools/pure';
+import { isHex64 } from 'src/common/type-guards.util';
 
 export function getPlatformSecretKey(): Uint8Array {
   const secret = process.env.PLATFORM_NSEC;
@@ -16,7 +17,7 @@ export function getPlatformSecretKey(): Uint8Array {
     return decoded.data;
   }
 
-  if (!/^[a-f0-9]{64}$/i.test(secret)) {
+  if (!isHex64(secret)) {
     throw new Error('PLATFORM_NSEC debe ser un nsec o hex de 64 caracteres.');
   }
 
@@ -43,7 +44,7 @@ export function getPlatformPublicKey(): string {
     publicKey = decoded.data;
   } else {
     // Caso 2: Si viene en formato Hexadecimal puro
-    if (!/^[a-f0-9]{64}$/i.test(configuredPublicKey)) {
+    if (!isHex64(configuredPublicKey)) {
       throw new Error('PLATFORM_NPUB debe ser un npub o hex de 64 caracteres.');
     }
 

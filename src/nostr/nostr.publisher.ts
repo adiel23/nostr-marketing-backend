@@ -1,11 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { finalizeEvent } from 'nostr-tools/pure';
 import { SimplePool } from 'nostr-tools/pool';
-import {
-  getPlatformSecretKey,
-  getPublishRelayUrl,
-  getRelayUrl,
-} from './nostr-keys.util';
+import { getPlatformSecretKey, getPublishRelayUrl } from './nostr-keys.util';
+import { NOSTR_KIND_TEXT_NOTE } from './nostr.constants';
 
 export interface PublishCommentInput {
   targetEventId: string;
@@ -24,16 +21,18 @@ export class NostrPublisher {
   async publishComment(
     input: PublishCommentInput,
   ): Promise<PublishCommentResult> {
-    const sourceRelayUrl = getRelayUrl();
     const publishRelayUrl = getPublishRelayUrl();
     const secretKey = getPlatformSecretKey();
     const signedEvent = finalizeEvent(
       {
-        kind: 1,
+        kind: NOSTR_KIND_TEXT_NOTE,
         created_at: Math.floor(Date.now() / 1000),
         tags: [
-          ['e', input.targetEventId, sourceRelayUrl, 'root'],
-          ['e', input.targetEventId, sourceRelayUrl, 'reply'],
+          // El hint de relay en las tags publicas debe ser un relay
+          // publicamente alcanzable: nunca el relay de escucha interno,
+          // que puede ser privado o un relay de pruebas aislado.
+          ['e', input.targetEventId, publishRelayUrl, 'root'],
+          ['e', input.targetEventId, publishRelayUrl, 'reply'],
           ['p', input.targetPubkey],
         ],
         content: input.content,

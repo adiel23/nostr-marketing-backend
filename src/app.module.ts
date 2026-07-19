@@ -1,7 +1,9 @@
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { timingSafeEqual } from 'crypto';
 import { AppController } from './app.controller';
@@ -71,6 +73,7 @@ function getBullBoardMiddleware() {
     NostrModule,
     CompaniesModule,
     ScheduleModule.forRoot(),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
     BullBoardModule.forRoot({
       route: '/queues',
       adapter: ExpressAdapter,
@@ -90,6 +93,6 @@ function getBullBoardMiddleware() {
     LlmModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

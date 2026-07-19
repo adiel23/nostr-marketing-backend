@@ -11,7 +11,6 @@ jest.mock('nostr-tools/pool', () => ({
 
 jest.mock('./nostr-keys.util', () => ({
   getPlatformSecretKey: jest.fn(() => new Uint8Array(32)),
-  getRelayUrl: jest.fn(() => 'wss://source.example'),
   getPublishRelayUrl: jest.fn(() => 'wss://public.example'),
 }));
 
@@ -40,12 +39,31 @@ describe('NostrPublisher', () => {
     expect(finalizeEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         tags: [
-          ['e', 'target-event', 'wss://source.example', 'root'],
-          ['e', 'target-event', 'wss://source.example', 'reply'],
+          ['e', 'target-event', 'wss://public.example', 'root'],
+          ['e', 'target-event', 'wss://public.example', 'reply'],
           ['p', 'target-pubkey'],
         ],
       }),
       expect.any(Uint8Array),
+    );
+  });
+
+  it('never leaks a private listener relay into the signed public event', async () => {
+    await new NostrPublisher().publishComment({
+      targetEventId: 'target-event',
+      targetPubkey: 'target-pubkey',
+      content: 'Oferta de prueba',
+    });
+
+    const [signedEventArg] = (finalizeEvent as jest.Mock).mock.calls[0] as [
+      { tags: string[][] },
+    ];
+    const relayHints = signedEventArg.tags
+      .filter((tag) => tag[0] === 'e')
+      .map((tag) => tag[2]);
+
+    expect(relayHints.every((hint) => hint === 'wss://public.example')).toBe(
+      true,
     );
   });
 });

@@ -21,6 +21,7 @@ lerna-debug.log*
 
 # IDEs and editors
 /.idea
+.claude/
 .project
 .classpath
 .c9/
@@ -36,12 +37,8 @@ lerna-debug.log*
 !.vscode/extensions.json
 
 # dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-.env.demo
+.env*
+!.env.example
 
 # temp directory
 .temp
