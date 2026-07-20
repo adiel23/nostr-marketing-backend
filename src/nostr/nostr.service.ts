@@ -5,6 +5,8 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bullmq'; 
 import { Queue } from 'bullmq'; 
 import { getPlatformPublicKey } from './nostr-keys.util';
+import { ImpactsService } from 'src/impacts/impacts.service';
+import { SimplePool } from 'nostr-tools';
 
 export interface CampaignKeywords {
   id: string;
@@ -28,9 +30,12 @@ export interface CampaignJobData {
 export class NostrService implements OnModuleInit, OnModuleDestroy {
   private ws!: WebSocket;
   private readonly relayUrl = process.env.NOSTR_RELAY_URL ?? 'wss://relay.damus.io';
+  // <-- 2. Añadimos la Pool persistente aquí
+  public readonly pool = new SimplePool();
 
   constructor(
     private campaignsService: CampaignsService, // Inyectaremos el servicio de campañas para acceder a la DB
+    private impactsService: ImpactsService, // Inyectamos el servicio de impactos para verificar impactos previos
     @InjectQueue('nostr-matches') private nostrQueue: Queue
   ) {}
 
@@ -125,10 +130,10 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
           return; 
         }
 
-        if (event.pubkey === getPlatformPublicKey()) {
-          console.log(`[Filtro] Mensaje omitido: proviene de nuestra propia pubkey.`);
-          return; 
-        }
+          if (event.pubkey === getPlatformPublicKey()) {
+            console.log(`[Filtro] Mensaje omitido: proviene de nuestra propia pubkey.`);
+            return; 
+          }
 
         console.log(`\n[Nuevo Evento de ${event.pubkey.substring(0, 8)}...]:`);
         console.log(`Contenido: ${content}`);
@@ -137,35 +142,47 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
         await this.findCampaignMatches(event, content);
       }
     } catch (e) {
-      console.error('Error al parsear mensaje del relay', e);
+      console.error('Error al manejar mensaje del relay', e);
     }
   }
 
   // 1. EL ALGORITMO DE MATCHING (Limpio y con responsabilidad única)
   private async findCampaignMatches(event: any, content: string) {
     const lowerCaseContent = content.toLowerCase();
-    const matchesToEnqueue: Promise<any>[] = [];
+    
+    // 1. Mapeamos las campañas a un array de promesas (ejecución en paralelo)
+  const promises = this.activeCampaigns.map(async (campaign) => {
+    const foundKeywords = campaign.keywords.filter(keyword => 
+      lowerCaseContent.includes(keyword)
+    );
 
-    for (const campaign of this.activeCampaigns) {
-      const foundKeywords = campaign.keywords.filter(keyword => 
-        lowerCaseContent.includes(keyword)
-      );
+    // Si no hay keywords, terminamos temprano esta campaña
+    if (foundKeywords.length === 0) return null;
 
-      if (foundKeywords.length > 0) {
-        // En lugar de disparar y olvidar, acumulamos las promesas
-        const jobPromise = this.enqueueMatch(campaign, event, content, foundKeywords);
-        matchesToEnqueue.push(jobPromise);
-      }
+    // Consultamos la DB de forma asíncrona en paralelo con las demás campañas
+    const alreadyImpacted = await this.impactsService.hasImpactForUser(campaign.id, event.pubkey);
+
+    if (alreadyImpacted) {
+      console.log(`[Filtro] El usuario ${event.pubkey} ya fue impactado por la campaña ${campaign.name} (ID: ${campaign.id})`);
+      return null; // Retornamos null para ignorarlo
     }
 
-    // Procesamos todos los envíos a la cola en paralelo de forma segura
-    if (matchesToEnqueue.length > 0) {
-      try {
-        await Promise.all(matchesToEnqueue);
-        console.log(`[Éxito] ${matchesToEnqueue.length} matches enviados a BullMQ.`);
-      } catch (error) {
-        console.error('Error crítico: No se pudieron encolar algunos matches en Redis', error);
+    // Si pasa los filtros, devolvemos la promesa de encolado en BullMQ
+    return this.enqueueMatch(campaign, event, content, foundKeywords);
+  });
+
+    try {
+      // 2. Resolvemos todo en paralelo (Base de datos + BullMQ)
+      const results = await Promise.all(promises);
+      
+      // Filtramos los 'nulls' para contar cuántos se encolaron realmente con éxito
+      const successfulMatches = results.filter(res => res !== null);
+      
+      if (successfulMatches.length > 0) {
+        console.log(`[Éxito] ${successfulMatches.length} matches enviados a BullMQ.`);
       }
+    } catch (error) {
+      console.error('Error crítico en el proceso de matching o encolado:', error);
     }
   }
 
@@ -203,5 +220,6 @@ export class NostrService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.ws) this.ws.close();
+    this.pool.destroy();
   }
 }

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef} from '@nestjs/common';
 import { NostrService } from './nostr.service';
 import { CampaignsModule } from 'src/campaigns/campaigns.module';
 import { BullModule } from '@nestjs/bullmq';
@@ -16,7 +16,7 @@ import { WalletModule } from 'src/wallet/wallet.module';
         CampaignsModule,
         LlmModule,
         ImpactsModule,
-        WalletModule,
+        forwardRef(() => WalletModule),
         BullModule.forRoot({
         connection: {
             host: 'redis_cache',
@@ -31,7 +31,8 @@ import { WalletModule } from 'src/wallet/wallet.module';
         adapter: BullMQAdapter, 
         }),
     ],
-    providers: [NostrService, NostrPublisher, ImpactExecutionService, NostrMatchesConsumer]
+    providers: [NostrService, NostrPublisher, ImpactExecutionService, NostrMatchesConsumer],
+    exports: [NostrService]
 })
 export class NostrModule {}
 

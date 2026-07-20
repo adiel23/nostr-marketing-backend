@@ -2,9 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { NWCClient } from '@getalby/sdk';
 import { CryptoService } from 'src/crypto/crypto.service';
 import { finalizeEvent, type Event } from 'nostr-tools/pure';
-import { SimplePool } from 'nostr-tools/pool';
 import { nip57 } from 'nostr-tools';
 import { getPlatformSecretKey, getRelayUrl } from 'src/nostr/nostr-keys.util';
+import {NostrService} from "src/nostr/nostr.service";
 
 export type ZapResult =
   | { success: true; feesPaid: number }
@@ -21,15 +21,25 @@ export interface SendZapInput {
 export class WalletService {
   private readonly logger = new Logger(WalletService.name);
 
-  constructor(private readonly cryptoService: CryptoService) {}
+  constructor(
+    private readonly cryptoService: CryptoService,
+    private readonly nostrService: NostrService
+  ) {}
 
   async sendZap(input: SendZapInput): Promise<ZapResult> {
-    const relayUrl = getRelayUrl();
     let nwcUrl: string | undefined;
+
+    // Definimos un set de relays populares para buscar el perfil. 
+    // Así no dependemos de que el usuario esté justo en tu relay por defecto.
+    const relays = [
+      'wss://relay.damus.io', 
+      'wss://nos.lol', 
+      'wss://relay.primal.net'
+    ];
 
     try {
       nwcUrl = this.cryptoService.decrypt(input.encryptedNwcUrl);
-      const metadata = await this.fetchUserMetadata(input.targetPubkey, relayUrl);
+      const metadata = await this.fetchUserMetadata(input.targetPubkey, relays);
 
       if (!metadata) {
         return {
@@ -60,7 +70,7 @@ export class WalletService {
           sig: '',
         },
         amount: amountMsats,
-        relays: [relayUrl],
+        relays: [getRelayUrl()],
       });
 
       const signedZapRequest = finalizeEvent(
@@ -91,18 +101,18 @@ export class WalletService {
 
   private async fetchUserMetadata(
     pubkey: string,
-    relayUrl: string,
+    relays: string[],
   ): Promise<Event | null> {
-    const pool = new SimplePool();
     try {
-      const events = await pool.querySync([relayUrl], {
+      const events = await this.nostrService.pool.querySync(relays, {
         kinds: [0],
         authors: [pubkey],
         limit: 1,
       });
       return events[0] ?? null;
-    } finally {
-      pool.close([relayUrl]);
+    } catch (error) {
+      this.logger.warn(`Error al obtener metadata del usuario ${pubkey}`, error);
+      return null;
     }
   }
 

@@ -37,16 +37,6 @@ export class ImpactExecutionService {
       };
     }
 
-    const alreadyImpacted = await this.impactsService.hasImpactForUser(
-      jobData.campaignId,
-      jobData.pubkey,
-    );
-    if (alreadyImpacted) {
-      throw new Error(
-        `El usuario ${jobData.pubkey} ya fue impactado por la campaña ${jobData.campaignId}`,
-      );
-    }
-
     const campaign = await this.campaignsService.findById(jobData.campaignId);
     if (!campaign) {
       throw new NotFoundException(`Campaña ${jobData.campaignId} no encontrada`);

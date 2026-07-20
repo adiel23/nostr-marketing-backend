@@ -1,9 +1,13 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { CryptoModule } from 'src/crypto/crypto.module';
+import { NostrModule } from 'src/nostr/nostr.module';
 
 @Module({
-  imports: [CryptoModule],
+  imports: [
+    CryptoModule,
+    forwardRef(() => NostrModule),
+   ],
   providers: [WalletService],
   exports: [WalletService],
 })
