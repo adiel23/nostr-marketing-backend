@@ -2,34 +2,46 @@ services:
   # 1. Servicio de la API (NestJS)
   api:
     build:
-      context: .
+      context: ./backend        # <-- CAMBIADO: Ahora apunta a la subcarpeta backend
       dockerfile: Dockerfile
     container_name: nest_api
     ports:
       - "3000:3000"
     volumes:
-      - .:/usr/src/app
+      - ./backend:/usr/src/app  # <-- CAMBIADO: Mapea la subcarpeta backend
       - /usr/src/app/node_modules
     env_file:
-      - .env
+      - ./backend/.env         # <-- CAMBIADO: Tu .env ahora vive dentro de backend
     depends_on:
       - postgres_db
       - redis_cache
 
-  # 2. Servicio de la Base de Datos (PostgreSQL)
+  # 2. Servicio del Frontend (NUEVO)
+  frontend:
+    build:
+      context: ./frontend       # <-- Apunta a la subcarpeta frontend
+      dockerfile: Dockerfile
+    container_name: frontend_app
+    ports:
+      - "5173:5173"             # <-- Cambia si tu frontend usa el 3000
+    volumes:
+      - ./frontend:/usr/src/app # <-- Mapea la subcarpeta frontend
+      - /usr/src/app/node_modules
+    depends_on:
+      - api                     # Espera a que la API intente levantar primero
+
+  # 3. Servicio de la Base de Datos (PostgreSQL)
   postgres_db:
     image: postgres:16-alpine
     container_name: postgres_db
     ports:
       - "5432:5432"
-    environment:
-      - POSTGRES_USER=${DB_USERNAME}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
+    env_file:
+      - ./backend/.env         # <-- IMPORTANTE: Añadido para que lea las variables de la base de datos desde el .env del backend
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # 3. Servicio de Caché / Mensajería (Redis)
+  # 4. Servicio de Caché / Mensajería (Redis)
   redis_cache:
     image: redis:7-alpine
     container_name: redis_cache
@@ -38,7 +50,6 @@ services:
     volumes:
       - redis_data:/data
 
-# Definimos volúmenes nombrados para que los datos no se borren al apagar los contenedores
 volumes:
   postgres_data:
   redis_data:
