@@ -43,6 +43,7 @@ export class ImpactExecutionService {
     }
 
     const platformFee = calculatePlatformFee(campaign.satsPerImpact);
+    
     const promotionalContent = this.buildPromotionalComment(
       campaign.name,
       campaign.productDescription,
@@ -64,17 +65,22 @@ export class ImpactExecutionService {
     const status =
       zapResult.success ? ImpactStatus.FULL_SUCCESS : ImpactStatus.COMMENT_ONLY;
 
-    const satsCharged = zapResult.success
-      ? campaign.satsPerImpact + platformFee + zapResult.feesPaid
-      : platformFee;
+    const zapSats = zapResult.success ? campaign.satsPerImpact : 0;
+    const lightningFeeSats = zapResult.success ? zapResult.feesPaid : 0;
+    const totalSpentSats = zapSats + lightningFeeSats + platformFee;
 
     const impact = await this.impactsService.createImpact({
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
+      targetContent: jobData.content,
+      foundKeywords: jobData.foundKeywords,
       status,
-      satsCharged,
+      satsCharged: totalSpentSats,
+      zapSats,
+      lightningFeeSats,
       platformFee,
+      totalSpentSats,
     });
 
     if (!zapResult.success) {

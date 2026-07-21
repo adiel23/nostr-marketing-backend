@@ -8,7 +8,18 @@ describe('CampaignsController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [CampaignsController],
-      providers: [CampaignsService],
+      providers: [
+        {
+          provide: CampaignsService,
+          useValue: {
+            create: jest.fn(),
+            findAllForCompany: jest.fn(),
+            findOneForCompany: jest.fn(),
+            update: jest.fn(),
+            remove: jest.fn(),
+          },
+        },
+      ],
     }).compile();
 
     controller = module.get<CampaignsController>(CampaignsController);

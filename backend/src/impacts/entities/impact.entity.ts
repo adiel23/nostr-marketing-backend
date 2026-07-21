@@ -33,6 +33,12 @@ export class Impact {
   @Column({ name: 'target_event_id', type: 'varchar', unique: true })
   targetEventId!: string;
 
+  @Column({ name: 'target_content', type: 'text', nullable: true })
+  targetContent!: string | null;
+
+  @Column({ name: 'found_keywords', type: 'text', array: true, default: '{}' })
+  foundKeywords!: string[];
+
   @Column({
     type: 'enum',
     enum: ImpactStatus,
@@ -42,8 +48,17 @@ export class Impact {
   @Column({ name: 'sats_charged', type: 'integer' })
   satsCharged!: number;
 
+  @Column({ name: 'zap_sats', type: 'integer', default: 0 })
+  zapSats!: number;
+
+  @Column({ name: 'lightning_fee_sats', type: 'integer', default: 0 })
+  lightningFeeSats!: number;
+
   @Column({ name: 'platform_fee', type: 'integer' })
   platformFee!: number;
+
+  @Column({ name: 'total_spent_sats', type: 'integer', default: 0 })
+  totalSpentSats!: number;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt!: Date;

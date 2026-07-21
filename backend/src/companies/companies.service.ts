@@ -6,6 +6,13 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import * as bcrypt from 'bcrypt';
 
+export interface PublicCompany {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: Date;
+}
+
 @Injectable()
 export class CompaniesService {
   constructor(
@@ -29,7 +36,8 @@ export class CompaniesService {
     });
 
     // 4. Guardamos en la base de datos y retornamos la entidad creada
-    return this.companiesRepository.save(company);
+    const savedCompany = await this.companiesRepository.save(company);
+    return this.toPublicCompany(savedCompany);
   }
 
   async validateCompany(email: string, password: string) {
@@ -47,12 +55,24 @@ export class CompaniesService {
     return company; // Empresa validada correctamente
   }
 
-  findAll() {
-    return this.companiesRepository.find(); // Devuelve todas las entidades
+  toPublicCompany(company: Company): PublicCompany {
+    return {
+      id: company.id,
+      name: company.name,
+      email: company.email,
+      createdAt: company.createdAt,
+    };
   }
 
-  findOne(id: string) {
-    return this.companiesRepository.findOne({ where: { id } }); // Devuelve una entidad por ID
+  async findAll() {
+    const companies = await this.companiesRepository
+      .find();
+    return companies.map((company) => this.toPublicCompany(company));
+  }
+
+  async findOne(id: string) {
+    const company = await this.companiesRepository.findOne({ where: { id } });
+    return company ? this.toPublicCompany(company) : null;
   }
 
   update(id: string, updateCompanyDto: UpdateCompanyDto) {

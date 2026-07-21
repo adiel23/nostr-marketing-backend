@@ -17,21 +17,25 @@ export class CampaignsController {
     return this.campaignsService.create(createCampaignDto, req.user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get()
-  findAll() {
-    return this.campaignsService.findAll();
+  findAll(@Req() req: any) {
+    return this.campaignsService.findAllForCompany(req.user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.campaignsService.findOne(+id);
+  findOne(@Param('id') id: string, @Req() req: any) {
+    return this.campaignsService.findOneForCompany(id, req.user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateCampaignDto: UpdateCampaignDto) {
     return this.campaignsService.update(+id, updateCampaignDto);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.campaignsService.remove(+id);

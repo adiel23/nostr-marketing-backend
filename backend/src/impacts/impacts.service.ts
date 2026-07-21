@@ -7,9 +7,14 @@ export interface CreateImpactInput {
   campaignId: string;
   targetPubkey: string;
   targetEventId: string;
+  targetContent?: string | null;
+  foundKeywords?: string[];
   status: ImpactStatus;
   satsCharged: number;
+  zapSats?: number;
+  lightningFeeSats?: number;
   platformFee: number;
+  totalSpentSats?: number;
 }
 
 @Injectable()
@@ -32,7 +37,16 @@ export class ImpactsService {
 
   async createImpact(input: CreateImpactInput): Promise<Impact> {
     try {
-      const impact = this.impactsRepository.create(input);
+      const totalSpentSats = input.totalSpentSats ?? input.satsCharged;
+      const impact = this.impactsRepository.create({
+        ...input,
+        targetContent: input.targetContent ?? null,
+        foundKeywords: input.foundKeywords ?? [],
+        zapSats: input.zapSats ?? 0,
+        lightningFeeSats: input.lightningFeeSats ?? 0,
+        totalSpentSats,
+        satsCharged: totalSpentSats,
+      });
       return await this.impactsRepository.save(impact);
     } catch (error) {
       throw new InternalServerErrorException('Error al registrar el impacto.');

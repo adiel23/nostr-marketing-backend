@@ -102,9 +102,14 @@ describe('ImpactExecutionService', () => {
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
+      targetContent: jobData.content,
+      foundKeywords: jobData.foundKeywords,
       status: ImpactStatus.FULL_SUCCESS,
       satsCharged: 103,
+      zapSats: 100,
+      lightningFeeSats: 1,
       platformFee: 2,
+      totalSpentSats: 103,
     });
     expect(result.status).toBe(ImpactStatus.FULL_SUCCESS);
     expect(result.zapSent).toBe(true);
@@ -123,9 +128,14 @@ describe('ImpactExecutionService', () => {
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
+      targetContent: jobData.content,
+      foundKeywords: jobData.foundKeywords,
       status: ImpactStatus.COMMENT_ONLY,
       satsCharged: 2,
+      zapSats: 0,
+      lightningFeeSats: 0,
       platformFee: 2,
+      totalSpentSats: 2,
     });
     expect(result.status).toBe(ImpactStatus.COMMENT_ONLY);
     expect(result.zapSent).toBe(false);
