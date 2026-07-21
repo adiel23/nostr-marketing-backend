@@ -239,6 +239,29 @@ describe('ImpactsService', () => {
     expect(campaign.reservedSats).toBe(100);
   });
 
+  it('prioritizes a completed redemption over an exhausted budget', async () => {
+    const existing = await service.reserveImpact({
+      campaignId: 'campaign-1',
+      targetPubkey: 'pubkey-1',
+      targetEventId: 'event-1',
+      reserveSats: 100,
+    });
+    existing.impact.status = ImpactStatus.FULL_SUCCESS;
+    campaign.reservedSats = 0;
+    campaign.spentSats = 100;
+    campaign.budgetSats = 100;
+    impactsRepository.findOne.mockResolvedValue(existing.impact);
+
+    await expect(
+      service.reserveImpact({
+        campaignId: 'campaign-1',
+        targetPubkey: 'pubkey-1',
+        targetEventId: 'event-2',
+        reserveSats: 100,
+      }),
+    ).resolves.toMatchObject({ reserved: false, impact: existing.impact });
+  });
+
   it('throws when a non-duplicate database error occurs during reservation', async () => {
     dataSource.transaction.mockImplementationOnce(() => {
       throw new Error('connection lost');

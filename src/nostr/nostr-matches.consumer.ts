@@ -57,9 +57,15 @@ export class NostrMatchesConsumer extends WorkerHost {
       const impactResult =
         await this.impactExecutionService.executeApprovedImpact(job.data);
 
-      this.logger.log(
-        `[Worker] Impacto registrado (${impactResult.status}). Comment: ${impactResult.commentEventId}`,
-      );
+      if (impactResult.alreadyRedeemed) {
+        this.logger.log(
+          `[Worker] already_redeemed: la cuenta ya redimió esta campaña; sin nuevo comentario ni zap. Impact: ${impactResult.impactId}`,
+        );
+      } else {
+        this.logger.log(
+          `[Worker] Impacto registrado (${impactResult.status}). Comment: ${impactResult.commentEventId}`,
+        );
+      }
 
       return {
         status: 'success',

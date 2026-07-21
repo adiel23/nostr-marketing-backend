@@ -22,6 +22,8 @@ export interface ImpactExecutionResult {
   impactId: string;
   commentEventId: string;
   zapSent: boolean;
+  /** True when an existing impact consumed this campaign/account redemption. */
+  alreadyRedeemed: boolean;
 }
 
 // Un pending mas viejo que esto se considera huerfano (proceso caido,
@@ -69,6 +71,7 @@ export class ImpactExecutionService {
         impactId: reservation.impact.id,
         commentEventId: reservation.impact.commentEventId ?? jobData.eventId,
         zapSent: reservation.impact.status === ImpactStatus.FULL_SUCCESS,
+        alreadyRedeemed: true,
       };
     }
 
@@ -124,6 +127,7 @@ export class ImpactExecutionService {
       impactId: impact.id,
       commentEventId,
       zapSent: zapResult.success,
+      alreadyRedeemed: false,
     };
   }
 

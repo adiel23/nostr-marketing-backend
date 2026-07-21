@@ -130,6 +130,7 @@ describe('ImpactExecutionService', () => {
     });
     expect(result.status).toBe(ImpactStatus.FULL_SUCCESS);
     expect(result.zapSent).toBe(true);
+    expect(result.alreadyRedeemed).toBe(false);
   });
 
   it('registra la invoice y el hash de pago antes de invocar payInvoice', async () => {
@@ -172,6 +173,7 @@ describe('ImpactExecutionService', () => {
     });
     expect(result.status).toBe(ImpactStatus.COMMENT_ONLY);
     expect(result.zapSent).toBe(false);
+    expect(result.alreadyRedeemed).toBe(false);
   });
 
   it('lanza error si la campaña no existe', async () => {
@@ -218,6 +220,7 @@ describe('ImpactExecutionService', () => {
 
     expect(result.zapSent).toBe(true);
     expect(result.commentEventId).toBe('previous-comment-id');
+    expect(result.alreadyRedeemed).toBe(true);
     expect(nostrPublisher.publishComment).not.toHaveBeenCalled();
     expect(walletService.sendZap).not.toHaveBeenCalled();
   });

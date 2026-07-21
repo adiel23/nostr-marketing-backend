@@ -80,6 +80,17 @@ export class ImpactsService {
    * transacción hace rollback y la reserva de presupuesto se deshace.
    */
   async reserveImpact(input: ReserveImpactInput): Promise<ImpactReservation> {
+    // Priorizamos una redencion existente antes de comprobar el presupuesto.
+    // Asi un segundo post de la misma cuenta queda auditado como duplicado aun
+    // cuando el primer impacto ya consumio todo el presupuesto de la campana.
+    const existingImpact = await this.findExistingImpact(input);
+    if (existingImpact) {
+      if (existingImpact.status === ImpactStatus.PENDING) {
+        throw new ImpactPendingException();
+      }
+      return { impact: existingImpact, reserved: false };
+    }
+
     try {
       return await this.dataSource.transaction(async (manager) => {
         const queryResult: unknown = await manager.query(
@@ -124,12 +135,7 @@ export class ImpactsService {
         throw new InternalServerErrorException('Error al reservar el impacto.');
       }
 
-      const impact = await this.impactsRepository.findOne({
-        where: [
-          { campaignId: input.campaignId, targetEventId: input.targetEventId },
-          { campaignId: input.campaignId, targetPubkey: input.targetPubkey },
-        ],
-      });
+      const impact = await this.findExistingImpact(input);
 
       if (!impact) {
         throw new InternalServerErrorException(
@@ -221,5 +227,16 @@ export class ImpactsService {
       'code' in error &&
       (error as { code?: unknown }).code === '23505'
     );
+  }
+
+  private async findExistingImpact(
+    input: ReserveImpactInput,
+  ): Promise<Impact | null> {
+    return this.impactsRepository.findOne({
+      where: [
+        { campaignId: input.campaignId, targetEventId: input.targetEventId },
+        { campaignId: input.campaignId, targetPubkey: input.targetPubkey },
+      ],
+    });
   }
 }
