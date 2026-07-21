@@ -10,6 +10,12 @@ jest.mock('src/wallet/wallet.service', () => ({
   })),
 }));
 
+jest.mock('src/llm/llm.service', () => ({
+  LlmService: jest.fn().mockImplementation(() => ({
+    generatePromotionalComment: jest.fn(),
+  })),
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { ImpactExecutionService } from './impact-execution.service';
@@ -18,7 +24,11 @@ import { ImpactsService } from 'src/impacts/impacts.service';
 import { NostrPublisher } from './nostr.publisher';
 import { WalletService } from 'src/wallet/wallet.service';
 import { ImpactStatus } from 'src/impacts/entities/impact.entity';
-import { CampaignStatus } from 'src/campaigns/entities/campaign.entity';
+import {
+  CampaignCommentMode,
+  CampaignStatus,
+} from 'src/campaigns/entities/campaign.entity';
+import { LlmService } from 'src/llm/llm.service';
 
 describe('ImpactExecutionService', () => {
   let service: ImpactExecutionService;
@@ -37,6 +47,9 @@ describe('ImpactExecutionService', () => {
   const walletService = {
     sendZap: jest.fn(),
   };
+  const llmService = {
+    generatePromotionalComment: jest.fn(),
+  };
 
   const jobData = {
     campaignId: 'campaign-1',
@@ -53,6 +66,8 @@ describe('ImpactExecutionService', () => {
     id: 'campaign-1',
     name: 'Wallet Bitcoin',
     productDescription: 'Wallet segura',
+    promotionalComment: 'Prueba Wallet Bitcoin para pagos seguros.',
+    commentMode: CampaignCommentMode.FIXED,
     nwcUrlEncrypted: 'encrypted-url',
     satsPerImpact: 100,
     status: CampaignStatus.ACTIVE,
@@ -68,6 +83,7 @@ describe('ImpactExecutionService', () => {
         { provide: ImpactsService, useValue: impactsService },
         { provide: NostrPublisher, useValue: nostrPublisher },
         { provide: WalletService, useValue: walletService },
+        { provide: LlmService, useValue: llmService },
       ],
     }).compile();
 
@@ -90,7 +106,7 @@ describe('ImpactExecutionService', () => {
     expect(nostrPublisher.publishComment).toHaveBeenCalledWith({
       targetEventId: jobData.eventId,
       targetPubkey: jobData.pubkey,
-      content: 'Wallet Bitcoin: Wallet segura',
+      content: 'Prueba Wallet Bitcoin para pagos seguros.',
     });
     expect(walletService.sendZap).toHaveBeenCalledWith({
       encryptedNwcUrl: campaign.nwcUrlEncrypted,
@@ -103,6 +119,8 @@ describe('ImpactExecutionService', () => {
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
       targetContent: jobData.content,
+      commentContent: campaign.promotionalComment,
+      commentEventId: 'comment-1',
       foundKeywords: jobData.foundKeywords,
       status: ImpactStatus.FULL_SUCCESS,
       satsCharged: 103,
@@ -129,6 +147,8 @@ describe('ImpactExecutionService', () => {
       targetPubkey: jobData.pubkey,
       targetEventId: jobData.eventId,
       targetContent: jobData.content,
+      commentContent: campaign.promotionalComment,
+      commentEventId: 'comment-1',
       foundKeywords: jobData.foundKeywords,
       status: ImpactStatus.COMMENT_ONLY,
       satsCharged: 2,
@@ -139,6 +159,67 @@ describe('ImpactExecutionService', () => {
     });
     expect(result.status).toBe(ImpactStatus.COMMENT_ONLY);
     expect(result.zapSent).toBe(false);
+  });
+
+  it('usa comentario generado por IA y cobra 5% cuando la generación funciona', async () => {
+    campaignsService.findById.mockResolvedValue({
+      ...campaign,
+      commentMode: CampaignCommentMode.AI,
+    });
+    llmService.generatePromotionalComment.mockResolvedValue({
+      content:
+        'Vi que buscas wallet; Wallet Bitcoin puede ayudarte con pagos seguros.',
+    });
+    walletService.sendZap.mockResolvedValue({ success: true, feesPaid: 1 });
+
+    await service.executeApprovedImpact(jobData);
+
+    expect(llmService.generatePromotionalComment).toHaveBeenCalledWith({
+      postContent: jobData.content,
+      campaignName: campaign.name,
+      productDescription: campaign.productDescription,
+      promotionalComment: campaign.promotionalComment,
+      foundKeywords: jobData.foundKeywords,
+    });
+    expect(nostrPublisher.publishComment).toHaveBeenCalledWith({
+      targetEventId: jobData.eventId,
+      targetPubkey: jobData.pubkey,
+      content:
+        'Vi que buscas wallet; Wallet Bitcoin puede ayudarte con pagos seguros.',
+    });
+    expect(impactsService.createImpact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commentContent:
+          'Vi que buscas wallet; Wallet Bitcoin puede ayudarte con pagos seguros.',
+        commentEventId: 'comment-1',
+        platformFee: 5,
+        totalSpentSats: 106,
+      }),
+    );
+  });
+
+  it('usa comentario fijo y cobra 2% cuando la IA falla', async () => {
+    campaignsService.findById.mockResolvedValue({
+      ...campaign,
+      commentMode: CampaignCommentMode.AI,
+    });
+    llmService.generatePromotionalComment.mockResolvedValue(null);
+    walletService.sendZap.mockResolvedValue({ success: true, feesPaid: 1 });
+
+    await service.executeApprovedImpact(jobData);
+
+    expect(nostrPublisher.publishComment).toHaveBeenCalledWith({
+      targetEventId: jobData.eventId,
+      targetPubkey: jobData.pubkey,
+      content: campaign.promotionalComment,
+    });
+    expect(impactsService.createImpact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        commentContent: campaign.promotionalComment,
+        platformFee: 2,
+        totalSpentSats: 103,
+      }),
+    );
   });
 
   it('lanza error si la campaña no existe', async () => {

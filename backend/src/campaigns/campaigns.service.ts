@@ -1,12 +1,21 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Campaign, CampaignStatus } from './entities/campaign.entity';
+import {
+  Campaign,
+  CampaignStatus,
+} from './entities/campaign.entity';
 import { NWCClient } from '@getalby/sdk';
 import { CryptoService } from 'src/crypto/crypto.service';
 import { Impact } from 'src/impacts/entities/impact.entity';
+import { calculatePlatformFee } from 'src/common/fees.util';
 
 interface ImpactTotals {
   impactsCount: number;
@@ -19,52 +28,48 @@ interface ImpactTotals {
 @Injectable()
 export class CampaignsService {
   constructor(
-    @InjectRepository(Campaign) 
+    @InjectRepository(Campaign)
     private campaignsRepository: Repository<Campaign>,
     @InjectRepository(Impact)
     private impactsRepository: Repository<Impact>,
-    private readonly cryptoService: CryptoService
+    private readonly cryptoService: CryptoService,
   ) {}
 
   async create(createCampaignDto: CreateCampaignDto, companyId: string) {
-    const { nwcUrl, satsPerImpact} = createCampaignDto;
+    const { nwcUrl, satsPerImpact } = createCampaignDto;
     const createdAt = new Date();
     const endsAt = new Date(createCampaignDto.endsAt);
 
-    if (Number.isNaN(endsAt.getTime()) || endsAt.getTime() <= createdAt.getTime()) {
+    if (
+      Number.isNaN(endsAt.getTime()) ||
+      endsAt.getTime() <= createdAt.getTime()
+    ) {
       throw new BadRequestException(
-        'La fecha de finalización debe ser posterior a la fecha de creación.'
+        'La fecha de finalización debe ser posterior a la fecha de creación.',
       );
     }
 
-    // 1. Instanciamos el cliente con la URL del DTO
-    const client = new NWCClient({
-      nostrWalletConnectUrl: nwcUrl,
-    });
-
     try {
-      // 2. Pedimos el balance a la red Nostr/Lightning
-      const response = await client.getBalance();
-      const walletBalanceSats = response.balance; // Balance actual del usuario en sats
+      const platformFeeRate = calculatePlatformFee(
+        satsPerImpact,
+        createCampaignDto.commentMode,
+      );
 
-      // REVISAR ESTA LOGICA LUEGO!!!!
-      const minimumRequired = satsPerImpact + (0.003 * satsPerImpact) + (0.02 * satsPerImpact);
+      const minimumRequired =
+        satsPerImpact + 0.003 * satsPerImpact + platformFeeRate * satsPerImpact;
 
-      // 3. Validamos los fondos
-      if (walletBalanceSats < minimumRequired) {
-        throw new BadRequestException(
-          `Saldo insuficiente en la wallet. Requieres al menos ${minimumRequired} sats.`
-        );
-      }
+      await this.validateWalletBalance(nwcUrl, minimumRequired);
 
-      // 4. TODO: Tu lógica para guardar la campaña en la base de datos...
-
-      const encryptedNwcUrl = this.cryptoService.encrypt(createCampaignDto.nwcUrl); // Ciframos la URL antes de guardarla
+      const encryptedNwcUrl = this.cryptoService.encrypt(
+        createCampaignDto.nwcUrl,
+      ); // Ciframos la URL antes de guardarla
 
       const newCampaign = this.campaignsRepository.create({
         companyId,
         name: createCampaignDto.name,
         productDescription: createCampaignDto.productDescription,
+        promotionalComment: createCampaignDto.promotionalComment,
+        commentMode: createCampaignDto.commentMode,
         keywords: createCampaignDto.keywords,
         nwcUrlEncrypted: encryptedNwcUrl, // Guardamos la URL cifrada
         satsPerImpact: createCampaignDto.satsPerImpact,
@@ -73,12 +78,14 @@ export class CampaignsService {
       });
 
       return await this.campaignsRepository.save(newCampaign);
-
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      if (this.isNwcInfoDiscoveryError(error)) {
+        throw new BadRequestException(
+          'No se pudo validar el balance de la wallet NWC porque el relay no devolvió el evento info kind 13194.',
+        );
+      }
       throw new InternalServerErrorException(`Error con la Wallet NWC`);
-    } finally {
-      client.close();
     }
   }
 
@@ -91,11 +98,13 @@ export class CampaignsService {
           ...(companyId && { companyId }),
         },
         order: {
-          createdAt: 'DESC', 
+          createdAt: 'DESC',
         },
       });
     } catch (error) {
-      throw new InternalServerErrorException('Error al obtener las campañas activas.');
+      throw new InternalServerErrorException(
+        'Error al obtener las campañas activas.',
+      );
     }
   }
 
@@ -155,7 +164,10 @@ export class CampaignsService {
       .select('impact.campaignId', 'campaignId')
       .addSelect('COUNT(impact.id)', 'impactsCount')
       .addSelect('COALESCE(SUM(impact.zapSats), 0)', 'totalZapSats')
-      .addSelect('COALESCE(SUM(impact.lightningFeeSats), 0)', 'totalLightningFeeSats')
+      .addSelect(
+        'COALESCE(SUM(impact.lightningFeeSats), 0)',
+        'totalLightningFeeSats',
+      )
       .addSelect('COALESCE(SUM(impact.platformFee), 0)', 'totalPlatformFeeSats')
       .addSelect('COALESCE(SUM(impact.totalSpentSats), 0)', 'totalSpentSats')
       .where('impact.campaignId IN (:...campaignIds)', { campaignIds })
@@ -180,9 +192,13 @@ export class CampaignsService {
       (totals, impact) => ({
         impactsCount: totals.impactsCount + 1,
         totalZapSats: totals.totalZapSats + (impact.zapSats ?? 0),
-        totalLightningFeeSats: totals.totalLightningFeeSats + (impact.lightningFeeSats ?? 0),
-        totalPlatformFeeSats: totals.totalPlatformFeeSats + (impact.platformFee ?? 0),
-        totalSpentSats: totals.totalSpentSats + (impact.totalSpentSats ?? impact.satsCharged ?? 0),
+        totalLightningFeeSats:
+          totals.totalLightningFeeSats + (impact.lightningFeeSats ?? 0),
+        totalPlatformFeeSats:
+          totals.totalPlatformFeeSats + (impact.platformFee ?? 0),
+        totalSpentSats:
+          totals.totalSpentSats +
+          (impact.totalSpentSats ?? impact.satsCharged ?? 0),
       }),
       this.emptyTotals(),
     );
@@ -193,6 +209,8 @@ export class CampaignsService {
       id: campaign.id,
       name: campaign.name,
       productDescription: campaign.productDescription,
+      promotionalComment: campaign.promotionalComment,
+      commentMode: campaign.commentMode,
       keywords: campaign.keywords,
       satsPerImpact: campaign.satsPerImpact,
       status: campaign.status,
@@ -209,6 +227,8 @@ export class CampaignsService {
       targetPubkey: impact.targetPubkey,
       targetEventId: impact.targetEventId,
       targetContent: impact.targetContent,
+      commentContent: impact.commentContent,
+      commentEventId: impact.commentEventId,
       foundKeywords: impact.foundKeywords ?? [],
       status: impact.status,
       zapSats: impact.zapSats ?? 0,
@@ -227,5 +247,41 @@ export class CampaignsService {
       totalPlatformFeeSats: 0,
       totalSpentSats: 0,
     };
+  }
+
+  private async validateWalletBalance(
+    nwcUrl: string,
+    minimumRequired: number,
+  ): Promise<void> {
+    const client = new NWCClient({
+      nostrWalletConnectUrl: nwcUrl,
+    });
+
+    try {
+      const response = await client.getBalance();
+      const walletBalanceSats = response.balance;
+
+      console.log("balance: " + walletBalanceSats + " sats");
+
+      if (walletBalanceSats < minimumRequired) {
+        throw new BadRequestException(
+          `Saldo insuficiente en la wallet. Requieres al menos ${minimumRequired} sats.`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw error;
+    } finally {
+      client.close();
+    }
+  }
+
+  private isNwcInfoDiscoveryError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+      message.includes('no info event') ||
+      message.includes('kind 13194') ||
+      message.includes('Failed to request get_balance')
+    );
   }
 }

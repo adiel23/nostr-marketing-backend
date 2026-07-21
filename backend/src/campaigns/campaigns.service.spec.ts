@@ -5,6 +5,8 @@ import { Campaign } from './entities/campaign.entity';
 import { CampaignsService } from './campaigns.service';
 import { CryptoService } from 'src/crypto/crypto.service';
 import { Impact } from 'src/impacts/entities/impact.entity';
+import { CampaignCommentMode } from './entities/campaign.entity';
+import { NWCClient } from '@getalby/sdk';
 
 jest.mock('@getalby/sdk', () => ({
   NWCClient: jest.fn().mockImplementation(() => ({
@@ -65,6 +67,65 @@ describe('CampaignsService', () => {
     expect(service).toBeDefined();
   });
 
+  it('should persist promotional comment settings when creating a campaign', async () => {
+    const futureDate = new Date(Date.now() + 60_000).toISOString();
+    const dto = {
+      name: 'Test campaign',
+      productDescription: 'Wallet segura',
+      promotionalComment: 'Prueba esta wallet segura.',
+      commentMode: CampaignCommentMode.AI,
+      keywords: ['wallet'],
+      nwcUrl: 'nostr+walletconnect://test',
+      satsPerImpact: 100,
+      endsAt: futureDate,
+    };
+
+    campaignsRepository.create.mockImplementation((input) => input);
+    campaignsRepository.save.mockImplementation((input) =>
+      Promise.resolve({ id: 'campaign-1', ...input }),
+    );
+
+    await service.create(dto, 'company-id');
+
+    expect(campaignsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promotionalComment: dto.promotionalComment,
+        commentMode: CampaignCommentMode.AI,
+      }),
+    );
+  });
+
+  it('should reject the campaign when NWC balance info discovery fails', async () => {
+    const futureDate = new Date(Date.now() + 60_000).toISOString();
+    const dto = {
+      name: 'Test campaign',
+      productDescription: 'Wallet segura',
+      promotionalComment: 'Prueba esta wallet segura.',
+      commentMode: CampaignCommentMode.FIXED,
+      keywords: ['wallet'],
+      nwcUrl: 'nostr+walletconnect://test',
+      satsPerImpact: 100,
+      endsAt: futureDate,
+    };
+
+    const NWCClientMock = NWCClient as unknown as jest.Mock;
+    NWCClientMock.mockImplementationOnce(() => ({
+      getBalance: jest
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            'Failed to request get_balance Error: no info event (kind 13194) returned from relay',
+          ),
+        ),
+      close: jest.fn(),
+    }));
+    await expect(service.create(dto, 'company-id')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(campaignsRepository.create).not.toHaveBeenCalled();
+    expect(campaignsRepository.save).not.toHaveBeenCalled();
+  });
+
   it('should reject campaigns whose end date is not after the creation date', async () => {
     const dto = {
       name: 'Test campaign',
@@ -86,6 +147,8 @@ describe('CampaignsService', () => {
         companyId: 'company-1',
         name: 'Wallet',
         productDescription: 'Wallet segura',
+        promotionalComment: 'Prueba Wallet Bitcoin.',
+        commentMode: CampaignCommentMode.FIXED,
         keywords: ['wallet'],
         satsPerImpact: 100,
         status: 'active',
@@ -116,6 +179,8 @@ describe('CampaignsService', () => {
     await expect(service.findAllForCompany('company-1')).resolves.toEqual([
       expect.objectContaining({
         id: 'campaign-1',
+        promotionalComment: 'Prueba Wallet Bitcoin.',
+        commentMode: CampaignCommentMode.FIXED,
         impactsCount: 2,
         totalZapSats: 200,
         totalLightningFeeSats: 3,
@@ -135,6 +200,8 @@ describe('CampaignsService', () => {
       companyId: 'company-1',
       name: 'Wallet',
       productDescription: 'Wallet segura',
+      promotionalComment: 'Prueba Wallet Bitcoin.',
+      commentMode: CampaignCommentMode.FIXED,
       keywords: ['wallet'],
       satsPerImpact: 100,
       status: 'active',
@@ -148,6 +215,8 @@ describe('CampaignsService', () => {
         targetPubkey: 'pubkey-1',
         targetEventId: 'event-1',
         targetContent: 'Busco wallet',
+        commentContent: 'Prueba Wallet Bitcoin.',
+        commentEventId: 'comment-1',
         foundKeywords: ['wallet'],
         status: 'full_success',
         zapSats: 100,
@@ -158,7 +227,9 @@ describe('CampaignsService', () => {
       },
     ]);
 
-    await expect(service.findOneForCompany('campaign-1', 'company-1')).resolves.toEqual(
+    await expect(
+      service.findOneForCompany('campaign-1', 'company-1'),
+    ).resolves.toEqual(
       expect.objectContaining({
         id: 'campaign-1',
         impactsCount: 1,
@@ -169,6 +240,8 @@ describe('CampaignsService', () => {
         impacts: [
           expect.objectContaining({
             targetContent: 'Busco wallet',
+            commentContent: 'Prueba Wallet Bitcoin.',
+            commentEventId: 'comment-1',
             foundKeywords: ['wallet'],
             zapSats: 100,
             lightningFeeSats: 1,

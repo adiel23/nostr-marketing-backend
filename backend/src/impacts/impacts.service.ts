@@ -8,6 +8,8 @@ export interface CreateImpactInput {
   targetPubkey: string;
   targetEventId: string;
   targetContent?: string | null;
+  commentContent?: string | null;
+  commentEventId?: string | null;
   foundKeywords?: string[];
   status: ImpactStatus;
   satsCharged: number;
@@ -24,7 +26,10 @@ export class ImpactsService {
     private readonly impactsRepository: Repository<Impact>,
   ) {}
 
-  async hasImpactForUser(campaignId: string, targetPubkey: string): Promise<boolean> {
+  async hasImpactForUser(
+    campaignId: string,
+    targetPubkey: string,
+  ): Promise<boolean> {
     const count = await this.impactsRepository.count({
       where: { campaignId, targetPubkey },
     });
@@ -41,6 +46,8 @@ export class ImpactsService {
       const impact = this.impactsRepository.create({
         ...input,
         targetContent: input.targetContent ?? null,
+        commentContent: input.commentContent ?? null,
+        commentEventId: input.commentEventId ?? null,
         foundKeywords: input.foundKeywords ?? [],
         zapSats: input.zapSats ?? 0,
         lightningFeeSats: input.lightningFeeSats ?? 0,

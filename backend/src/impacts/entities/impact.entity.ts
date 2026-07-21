@@ -36,6 +36,12 @@ export class Impact {
   @Column({ name: 'target_content', type: 'text', nullable: true })
   targetContent!: string | null;
 
+  @Column({ name: 'comment_content', type: 'text', nullable: true })
+  commentContent!: string | null;
+
+  @Column({ name: 'comment_event_id', type: 'varchar', nullable: true })
+  commentEventId!: string | null;
+
   @Column({ name: 'found_keywords', type: 'text', array: true, default: '{}' })
   foundKeywords!: string[];
 

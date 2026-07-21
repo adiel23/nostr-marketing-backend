@@ -1,23 +1,27 @@
 import { Company } from 'src/companies/entities/company.entity';
-import { 
-  Entity, 
-  PrimaryGeneratedColumn, 
-  Column, 
-  CreateDateColumn, 
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
   ManyToOne,
-  JoinColumn
+  JoinColumn,
 } from 'typeorm';
 
 export enum CampaignStatus {
   ACTIVE = 'active',
   PAUSED = 'paused',
   CANCELLED = 'cancelled',
-  COMPLETED = 'completed'
+  COMPLETED = 'completed',
+}
+
+export enum CampaignCommentMode {
+  FIXED = 'fixed',
+  AI = 'ai',
 }
 
 @Entity({ name: 'campaigns' })
 export class Campaign {
-
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -26,15 +30,28 @@ export class Campaign {
   companyId!: string;
 
   // 2. Creas la relación usando @JoinColumn apuntando a 'company_id'
-  @ManyToOne(() => Company, (company) => company.campaigns, { onDelete: 'CASCADE' })
+  @ManyToOne(() => Company, (company) => company.campaigns, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'company_id' }) // 👈 Esto une la propiedad 'company' con la columna 'company_id'
   company!: Company;
 
   @Column({ type: 'varchar' })
   name!: string;
 
-  @Column({ type: 'text'})
+  @Column({ type: 'text' })
   productDescription!: string;
+
+  @Column({ name: 'promotional_comment', type: 'text' })
+  promotionalComment!: string;
+
+  @Column({
+    name: 'comment_mode',
+    type: 'enum',
+    enum: CampaignCommentMode,
+    default: CampaignCommentMode.FIXED,
+  })
+  commentMode!: CampaignCommentMode;
 
   @Column({ type: 'text', array: true })
   keywords!: string[];
@@ -50,7 +67,7 @@ export class Campaign {
   @Column({
     type: 'enum',
     enum: CampaignStatus,
-    default: CampaignStatus.ACTIVE // Opcional: define un estado inicial por defecto
+    default: CampaignStatus.ACTIVE, // Opcional: define un estado inicial por defecto
   })
   status!: CampaignStatus;
 
