@@ -6,6 +6,8 @@ const SESSION_KEY = 'nostr-marketing-session'
 const emptyCampaignForm = {
   name: '',
   productDescription: '',
+  promotionalComment: '',
+  commentMode: 'fixed',
   keywords: '',
   nwcUrl: '',
   satsPerImpact: '',
@@ -18,7 +20,11 @@ function App() {
   const [campaigns, setCampaigns] = useState([])
   const [selectedCampaign, setSelectedCampaign] = useState(null)
   const [campaignForm, setCampaignForm] = useState(emptyCampaignForm)
-  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' })
+  const [authForm, setAuthForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+  })
   const [loading, setLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [savingCampaign, setSavingCampaign] = useState(false)
@@ -80,7 +86,10 @@ function App() {
 
       const nextSession = {
         token: login.access_token,
-        company: login.company ?? { email: authForm.email.trim(), name: authForm.name.trim() },
+        company: login.company ?? {
+          email: authForm.email.trim(),
+          name: authForm.name.trim(),
+        },
       }
       localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession))
       setSession(nextSession)
@@ -100,7 +109,9 @@ function App() {
       const data = await request('/campaigns')
       setCampaigns(data)
       if (selectedCampaign) {
-        const refreshed = data.find((campaign) => campaign.id === selectedCampaign.id)
+        const refreshed = data.find(
+          (campaign) => campaign.id === selectedCampaign.id,
+        )
         if (!refreshed) setSelectedCampaign(null)
       }
     } catch (loadError) {
@@ -137,6 +148,8 @@ function App() {
         body: JSON.stringify({
           name: campaignForm.name.trim(),
           productDescription: campaignForm.productDescription.trim(),
+          promotionalComment: campaignForm.promotionalComment.trim(),
+          commentMode: campaignForm.commentMode,
           keywords: campaignForm.keywords
             .split(',')
             .map((keyword) => keyword.trim())
@@ -182,7 +195,9 @@ function App() {
               <Field
                 label="Empresa"
                 value={authForm.name}
-                onChange={(value) => setAuthForm((form) => ({ ...form, name: value }))}
+                onChange={(value) =>
+                  setAuthForm((form) => ({ ...form, name: value }))
+                }
                 required
               />
             )}
@@ -190,14 +205,18 @@ function App() {
               label="Email"
               type="email"
               value={authForm.email}
-              onChange={(value) => setAuthForm((form) => ({ ...form, email: value }))}
+              onChange={(value) =>
+                setAuthForm((form) => ({ ...form, email: value }))
+              }
               required
             />
             <Field
               label="Password"
               type="password"
               value={authForm.password}
-              onChange={(value) => setAuthForm((form) => ({ ...form, password: value }))}
+              onChange={(value) =>
+                setAuthForm((form) => ({ ...form, password: value }))
+              }
               minLength={6}
               required
             />
@@ -209,7 +228,11 @@ function App() {
               disabled={loading}
               type="submit"
             >
-              {loading ? 'Procesando...' : authMode === 'login' ? 'Entrar' : 'Crear cuenta'}
+              {loading
+                ? 'Procesando...'
+                : authMode === 'login'
+                  ? 'Entrar'
+                  : 'Crear cuenta'}
             </button>
           </form>
 
@@ -271,33 +294,71 @@ function App() {
         </section>
 
         <aside className="h-fit rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-950">Nueva campaña</h2>
+          <h2 className="text-lg font-semibold text-slate-950">
+            Nueva campaña
+          </h2>
           <form className="mt-4 space-y-4" onSubmit={createCampaign}>
             <Field
               label="Nombre"
               value={campaignForm.name}
-              onChange={(value) => setCampaignForm((form) => ({ ...form, name: value }))}
+              onChange={(value) =>
+                setCampaignForm((form) => ({ ...form, name: value }))
+              }
               required
             />
             <TextArea
               label="Descripción del producto"
               value={campaignForm.productDescription}
               onChange={(value) =>
-                setCampaignForm((form) => ({ ...form, productDescription: value }))
+                setCampaignForm((form) => ({
+                  ...form,
+                  productDescription: value,
+                }))
               }
               required
             />
+            <TextArea
+              label="Comentario promocional"
+              value={campaignForm.promotionalComment}
+              onChange={(value) =>
+                setCampaignForm((form) => ({
+                  ...form,
+                  promotionalComment: value,
+                }))
+              }
+              required
+            />
+            <Select
+              label="Modo de comentario"
+              value={campaignForm.commentMode}
+              onChange={(value) =>
+                setCampaignForm((form) => ({ ...form, commentMode: value }))
+              }
+              options={[
+                { value: 'fixed', label: 'Fijo' },
+                { value: 'ai', label: 'IA' },
+              ]}
+            />
+            <p className="text-xs text-slate-500">
+              {campaignForm.commentMode === 'ai'
+                ? 'Fee plataforma: 5% cuando se genere con IA; fallback fijo 2%.'
+                : 'Fee plataforma: 2% por impacto.'}
+            </p>
             <Field
               label="Keywords"
               placeholder="bitcoin, wallet, pagos"
               value={campaignForm.keywords}
-              onChange={(value) => setCampaignForm((form) => ({ ...form, keywords: value }))}
+              onChange={(value) =>
+                setCampaignForm((form) => ({ ...form, keywords: value }))
+              }
               required
             />
             <Field
               label="NWC URL"
               value={campaignForm.nwcUrl}
-              onChange={(value) => setCampaignForm((form) => ({ ...form, nwcUrl: value }))}
+              onChange={(value) =>
+                setCampaignForm((form) => ({ ...form, nwcUrl: value }))
+              }
               required
             />
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
@@ -315,7 +376,9 @@ function App() {
                 label="Finaliza"
                 type="datetime-local"
                 value={campaignForm.endsAt}
-                onChange={(value) => setCampaignForm((form) => ({ ...form, endsAt: value }))}
+                onChange={(value) =>
+                  setCampaignForm((form) => ({ ...form, endsAt: value }))
+                }
                 required
               />
             </div>
@@ -333,7 +396,13 @@ function App() {
   )
 }
 
-function CampaignList({ campaigns, loading, onRefresh, onSelect, selectedCampaignId }) {
+function CampaignList({
+  campaigns,
+  loading,
+  onRefresh,
+  onSelect,
+  selectedCampaignId,
+}) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
@@ -361,13 +430,19 @@ function CampaignList({ campaigns, loading, onRefresh, onSelect, selectedCampaig
           <tbody className="divide-y divide-slate-100">
             {loading && campaigns.length === 0 ? (
               <tr>
-                <td className="px-5 py-8 text-center text-slate-500" colSpan="5">
+                <td
+                  className="px-5 py-8 text-center text-slate-500"
+                  colSpan="5"
+                >
                   Cargando campañas...
                 </td>
               </tr>
             ) : campaigns.length === 0 ? (
               <tr>
-                <td className="px-5 py-8 text-center text-slate-500" colSpan="5">
+                <td
+                  className="px-5 py-8 text-center text-slate-500"
+                  colSpan="5"
+                >
                   No hay campañas todavía.
                 </td>
               </tr>
@@ -381,7 +456,9 @@ function CampaignList({ campaigns, loading, onRefresh, onSelect, selectedCampaig
                   onClick={() => onSelect(campaign.id)}
                 >
                   <td className="px-5 py-4">
-                    <div className="font-medium text-slate-950">{campaign.name}</div>
+                    <div className="font-medium text-slate-950">
+                      {campaign.name}
+                    </div>
                     <div className="mt-1 max-w-sm truncate text-slate-500">
                       {campaign.productDescription}
                     </div>
@@ -389,11 +466,15 @@ function CampaignList({ campaigns, loading, onRefresh, onSelect, selectedCampaig
                   <td className="px-5 py-4">
                     <StatusBadge status={campaign.status} />
                   </td>
-                  <td className="px-5 py-4 text-slate-700">{campaign.impactsCount}</td>
+                  <td className="px-5 py-4 text-slate-700">
+                    {campaign.impactsCount}
+                  </td>
                   <td className="px-5 py-4 font-medium text-slate-950">
                     {formatSats(campaign.totalSpentSats)}
                   </td>
-                  <td className="px-5 py-4 text-slate-600">{formatDate(campaign.endsAt)}</td>
+                  <td className="px-5 py-4 text-slate-600">
+                    {formatDate(campaign.endsAt)}
+                  </td>
                 </tr>
               ))
             )}
@@ -426,7 +507,9 @@ function CampaignDetail({ campaign, loading }) {
       <div className="border-b border-slate-200 px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-xl font-semibold text-slate-950">{campaign.name}</h2>
+            <h2 className="text-xl font-semibold text-slate-950">
+              {campaign.name}
+            </h2>
             <p className="mt-1 max-w-3xl text-sm text-slate-600">
               {campaign.productDescription}
             </p>
@@ -435,18 +518,36 @@ function CampaignDetail({ campaign, loading }) {
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {(campaign.keywords ?? []).map((keyword) => (
-            <span className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-700" key={keyword}>
+            <span
+              className="rounded-md bg-slate-100 px-2.5 py-1 text-xs text-slate-700"
+              key={keyword}
+            >
               {keyword}
             </span>
           ))}
+          <span className="rounded-md bg-blue-100 px-2.5 py-1 text-xs text-blue-800">
+            Comentario {campaign.commentMode === 'ai' ? 'IA' : 'fijo'}
+          </span>
+        </div>
+        <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          {campaign.promotionalComment}
         </div>
       </div>
 
       <div className="grid gap-3 border-b border-slate-200 p-5 sm:grid-cols-2 xl:grid-cols-4">
         <Metric label="Zap enviado" value={formatSats(campaign.totalZapSats)} />
-        <Metric label="Fee Lightning" value={formatSats(campaign.totalLightningFeeSats)} />
-        <Metric label="Fee plataforma" value={formatSats(campaign.totalPlatformFeeSats)} />
-        <Metric label="Total gastado" value={formatSats(campaign.totalSpentSats)} />
+        <Metric
+          label="Fee Lightning"
+          value={formatSats(campaign.totalLightningFeeSats)}
+        />
+        <Metric
+          label="Fee plataforma"
+          value={formatSats(campaign.totalPlatformFeeSats)}
+        />
+        <Metric
+          label="Total gastado"
+          value={formatSats(campaign.totalSpentSats)}
+        />
       </div>
 
       <div className="overflow-x-auto">
@@ -455,6 +556,7 @@ function CampaignDetail({ campaign, loading }) {
             <tr>
               <th className="px-5 py-3 font-semibold">Usuario</th>
               <th className="px-5 py-3 font-semibold">Post</th>
+              <th className="px-5 py-3 font-semibold">Comentario</th>
               <th className="px-5 py-3 font-semibold">Keywords</th>
               <th className="px-5 py-3 font-semibold">Zap</th>
               <th className="px-5 py-3 font-semibold">Fee LN</th>
@@ -466,7 +568,10 @@ function CampaignDetail({ campaign, loading }) {
           <tbody className="divide-y divide-slate-100">
             {(campaign.impacts ?? []).length === 0 ? (
               <tr>
-                <td className="px-5 py-8 text-center text-slate-500" colSpan="8">
+                <td
+                  className="px-5 py-8 text-center text-slate-500"
+                  colSpan="9"
+                >
                   Esta campaña todavía no tiene impactos.
                 </td>
               </tr>
@@ -485,6 +590,14 @@ function CampaignDetail({ campaign, loading }) {
                     </div>
                   </td>
                   <td className="px-5 py-4">
+                    <div className="max-w-md text-slate-700">
+                      {impact.commentContent || 'No disponible'}
+                    </div>
+                    <div className="mt-1 font-mono text-xs text-slate-400">
+                      {shorten(impact.commentEventId)}
+                    </div>
+                  </td>
+                  <td className="px-5 py-4">
                     <div className="flex min-w-40 flex-wrap gap-1.5">
                       {(impact.foundKeywords ?? []).length === 0 ? (
                         <span className="text-slate-400">No disponible</span>
@@ -500,17 +613,23 @@ function CampaignDetail({ campaign, loading }) {
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-4 text-slate-700">{formatSats(impact.zapSats)}</td>
+                  <td className="px-5 py-4 text-slate-700">
+                    {formatSats(impact.zapSats)}
+                  </td>
                   <td className="px-5 py-4 text-slate-700">
                     {formatSats(impact.lightningFeeSats)}
                   </td>
-                  <td className="px-5 py-4 text-slate-700">{formatSats(impact.platformFee)}</td>
+                  <td className="px-5 py-4 text-slate-700">
+                    {formatSats(impact.platformFee)}
+                  </td>
                   <td className="px-5 py-4 font-medium text-slate-950">
                     {formatSats(impact.totalSpentSats)}
                   </td>
                   <td className="px-5 py-4">
                     <StatusBadge status={impact.status} />
-                    <div className="mt-1 text-xs text-slate-400">{formatDate(impact.createdAt)}</div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {formatDate(impact.createdAt)}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -528,7 +647,12 @@ function Metrics({ totals }) {
       <Metric label="Campañas activas" value={totals.activeCampaigns} />
       <Metric label="Impactos" value={totals.impactsCount} />
       <Metric label="Zap enviado" value={formatSats(totals.totalZapSats)} />
-      <Metric label="Fees" value={formatSats(totals.totalLightningFeeSats + totals.totalPlatformFeeSats)} />
+      <Metric
+        label="Fees"
+        value={formatSats(
+          totals.totalLightningFeeSats + totals.totalPlatformFeeSats,
+        )}
+      />
       <Metric label="Total gastado" value={formatSats(totals.totalSpentSats)} />
     </section>
   )
@@ -537,7 +661,9 @@ function Metrics({ totals }) {
 function Metric({ label, value }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
       <div className="mt-2 text-2xl font-semibold text-slate-950">{value}</div>
     </div>
   )
@@ -570,6 +696,25 @@ function TextArea({ label, value, onChange, ...props }) {
   )
 }
 
+function Select({ label, options, onChange, ...props }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <select
+        className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+        onChange={(event) => onChange(event.target.value)}
+        {...props}
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function Alert({ error, message }) {
   if (!error && !message) return null
 
@@ -597,7 +742,9 @@ function StatusBadge({ status }) {
   }
 
   return (
-    <span className={`rounded-md px-2.5 py-1 text-xs font-medium ${colors[status] ?? 'bg-slate-100 text-slate-700'}`}>
+    <span
+      className={`rounded-md px-2.5 py-1 text-xs font-medium ${colors[status] ?? 'bg-slate-100 text-slate-700'}`}
+    >
       {formatStatus(status)}
     </span>
   )
@@ -615,12 +762,14 @@ function readSession() {
 function summarizeCampaigns(campaigns) {
   return campaigns.reduce(
     (totals, campaign) => ({
-      activeCampaigns: totals.activeCampaigns + (campaign.status === 'active' ? 1 : 0),
+      activeCampaigns:
+        totals.activeCampaigns + (campaign.status === 'active' ? 1 : 0),
       impactsCount: totals.impactsCount + (campaign.impactsCount ?? 0),
       totalZapSats: totals.totalZapSats + (campaign.totalZapSats ?? 0),
       totalLightningFeeSats:
         totals.totalLightningFeeSats + (campaign.totalLightningFeeSats ?? 0),
-      totalPlatformFeeSats: totals.totalPlatformFeeSats + (campaign.totalPlatformFeeSats ?? 0),
+      totalPlatformFeeSats:
+        totals.totalPlatformFeeSats + (campaign.totalPlatformFeeSats ?? 0),
       totalSpentSats: totals.totalSpentSats + (campaign.totalSpentSats ?? 0),
     }),
     {
