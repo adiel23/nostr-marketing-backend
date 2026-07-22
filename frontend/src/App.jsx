@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
+const API_URL =
+  window.__APP_CONFIG__?.VITE_API_URL ||
+  import.meta.env.VITE_API_URL ||
+  'http://localhost:3000'
 const SESSION_KEY = 'nostr-marketing-session'
 
 const emptyCampaignForm = {

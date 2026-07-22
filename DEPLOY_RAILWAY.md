@@ -41,9 +41,9 @@ Railway proporciona `PORT` automáticamente. La API ejecuta migraciones al arran
 
 ## 4. Variable y despliegue del frontend
 
-En `frontend` configura el argumento de compilación `VITE_API_URL` con el dominio HTTPS de la API, sin `/` final, y vuelve a desplegar. Para el contenedor nginx configura `PORT=8080` si Railway lo solicita.
+En `frontend` configura la variable `VITE_API_URL` con el dominio HTTPS de la API, sin `/` final, y vuelve a desplegar. El contenedor la escribe al arrancar, de modo que no depende de que Railway la inyecte durante la compilación. Para el contenedor nginx configura `PORT=8080` si Railway lo solicita.
 
-Cada cambio de `VITE_API_URL` requiere recompilar el frontend porque Vite incorpora este valor en los archivos estáticos.
+Cada cambio de `VITE_API_URL` requiere redeplegar el frontend para reiniciar su contenedor.
 
 ## 5. Comprobación antes de difundir el enlace
 
