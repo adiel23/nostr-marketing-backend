@@ -22,6 +22,9 @@ import { envPort, requiredEnv } from 'src/common/env.util';
         connection: {
             host: requiredEnv('REDIS_HOST'),
             port: envPort('REDIS_PORT', 6379),
+            username: process.env.REDIS_USERNAME,
+            password: process.env.REDIS_PASSWORD,
+            family: 0,
         },
         }),
         BullModule.registerQueue({

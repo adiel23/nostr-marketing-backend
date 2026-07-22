@@ -28,6 +28,8 @@ En el servicio `api`, añade estas variables. Las referencias se eligen desde **
 | `DB_NAME` | referencia a `Postgres.PGDATABASE` |
 | `REDIS_HOST` | referencia a `Redis.REDISHOST` |
 | `REDIS_PORT` | referencia a `Redis.REDISPORT` |
+| `REDIS_USERNAME` | referencia a `Redis.REDISUSER` |
+| `REDIS_PASSWORD` | referencia a `Redis.REDISPASSWORD` |
 | `JWT_SECRET` | nuevo secreto aleatorio largo |
 | `ENCRYPTION_KEY` | nueva clave AES hexadecimal de 64 caracteres |
 | `PLATFORM_NSEC`, `PLATFORM_NPUB`, `PLATFORM_NWC_URL` | nuevas credenciales de producción |
