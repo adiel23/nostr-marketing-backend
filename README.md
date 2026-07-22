@@ -1,64 +1,64 @@
 # Nostr Marketing
 
-Plataforma para administrar campañas promocionales en Nostr. El frontend React permite crear campañas y ver sus impactos; la API NestJS guarda los datos en PostgreSQL, usa Redis/BullMQ para trabajos asíncronos y se integra con Nostr, NWC y OpenRouter.
+Platform for managing promotional campaigns on Nostr. The React frontend lets users create campaigns and view their impacts; the NestJS API stores data in PostgreSQL, uses Redis/BullMQ for asynchronous jobs, and integrates with Nostr, NWC, and OpenRouter.
 
-## Arquitectura
+## Architecture
 
-- `frontend`: React y Vite.
-- `backend`: API NestJS, TypeORM, PostgreSQL, Redis/BullMQ e integraciones Nostr/NWC/OpenRouter.
-- `docker-compose.yml`: entorno local completo con recarga automática.
-- `DEPLOY_RAILWAY.md`: guía de publicación en Railway.
+- `frontend`: React and Vite.
+- `backend`: NestJS API, TypeORM, PostgreSQL, Redis/BullMQ, and Nostr/NWC/OpenRouter integrations.
+- `docker-compose.yml`: complete local environment with hot reload.
+- `DEPLOY_RAILWAY.md`: Railway deployment guide.
 
-## Requisitos
+## Requirements
 
-- Docker Desktop con Docker Compose v2.
-- En WSL, activar la integración de la distribución en Docker Desktop.
-- Credenciales **de desarrollo** para Nostr, NWC y OpenRouter si se probarán esos flujos reales.
+- Docker Desktop with Docker Compose v2.
+- When using WSL, enable the distribution integration in Docker Desktop.
+- **Development** credentials for Nostr, NWC, and OpenRouter when testing real flows.
 
-## Configuración local
+## Local configuration
 
-1. Crea el archivo local de variables:
+1. Create the local environment file:
 
    ```bash
    cp backend/.env.example backend/.env
    ```
 
-2. Completa `backend/.env`. Define al menos una clave hexadecimal aleatoria de 64 caracteres para `ENCRYPTION_KEY`, un `JWT_SECRET` largo y una contraseña de base de datos. Usa estos valores de conectividad local:
+2. Complete `backend/.env`. Define at least a random 64-character hexadecimal key for `ENCRYPTION_KEY`, a long `JWT_SECRET`, and a database password. Use these local connectivity values:
 
-   | Variable | Valor en `backend/.env` | Valor efectivo con `docker compose` | Uso |
+   | Variable | Value in `backend/.env` | Effective value with `docker compose` | Purpose |
    | --- | --- | --- | --- |
-   | `DB_HOST` | `localhost` | `postgres_db` | API a PostgreSQL |
-   | `REDIS_HOST` | `localhost` | `redis_cache` | API a Redis/BullMQ |
-   | `REDIS_USERNAME` | vacío | vacío | Redis local no usa usuario |
-   | `REDIS_PASSWORD` | vacío | vacío | Redis local no usa contraseña |
+   | `DB_HOST` | `localhost` | `postgres_db` | API to PostgreSQL |
+   | `REDIS_HOST` | `localhost` | `redis_cache` | API to Redis/BullMQ |
+   | `REDIS_USERNAME` | empty | empty | Local Redis does not use a username |
+   | `REDIS_PASSWORD` | empty | empty | Local Redis does not use a password |
 
-   `localhost` permite ejecutar la API directamente con `npm run start:dev`, usando los puertos publicados por Compose. Al ejecutar `docker compose`, las dos variables `*_HOST` se sustituyen automáticamente por los nombres de servicio de la red interna. Para un Redis externo protegido, rellena `REDIS_USERNAME` y `REDIS_PASSWORD`; en Railway se configuran mediante referencias al Redis administrado.
+   `localhost` lets you run the API directly with `npm run start:dev`, using the ports published by Compose. When running `docker compose`, both `*_HOST` variables are automatically replaced with the internal network service names. For a protected external Redis instance, set `REDIS_USERNAME` and `REDIS_PASSWORD`; Railway configures them through managed Redis references.
 
-3. Para usar las integraciones reales, configura `PLATFORM_NSEC`, su clave pública correspondiente `PLATFORM_NPUB`, `PLATFORM_NWC_URL` y, cuando corresponda, `OPENROUTER_API_KEY`. Usa únicamente secretos, identidad Nostr, wallet y saldo de desarrollo. Nunca reutilices los valores configurados en producción.
+3. To use real integrations, configure `PLATFORM_NSEC`, its corresponding public key `PLATFORM_NPUB`, `PLATFORM_NWC_URL`, and, when applicable, `OPENROUTER_API_KEY`. Use only development secrets, Nostr identity, wallet, and balance. Never reuse values configured for production.
 
-Las variables existen en ambos entornos, pero sus valores deben ser distintos: los de producción se definen exclusivamente en Railway y los locales permanecen en `backend/.env`, que Git ignora.
+The variables exist in both environments, but their values must differ: production values are defined exclusively in Railway, while local values remain in `backend/.env`, which Git ignores.
 
-## Ejecutar en desarrollo
+## Run in development
 
 ```bash
 docker compose up --build
 ```
 
-El frontend estará disponible en http://localhost:5173 y la API en http://localhost:3000. PostgreSQL y Redis se exponen en los puertos `5432` y `6379`. La API espera a que ambas dependencias estén saludables y ejecuta las migraciones pendientes al arrancar.
+The frontend is available at http://localhost:5173 and the API at http://localhost:3000. PostgreSQL and Redis are exposed on ports `5432` and `6379`. The API waits for both dependencies to be healthy and runs pending migrations at startup.
 
-El código de frontend y backend se monta en los contenedores, por lo que Vite y Nest recargan automáticamente al modificarlo. Para detener el entorno usa `docker compose down`. Para eliminar también las bases de datos locales y empezar de cero usa `docker compose down -v`.
+Frontend and backend source code is mounted into the containers, so Vite and Nest reload automatically after changes. To stop the environment, run `docker compose down`. To also remove local databases and start over, run `docker compose down -v`.
 
-## Calidad y pruebas
+## Quality and tests
 
-Con las dependencias instaladas en cada paquete, los comandos principales son:
+With dependencies installed in each package, the main commands are:
 
 ```bash
 cd backend && npm test && npm run build
 cd frontend && npm run lint && npm run build
 ```
 
-Antes de probar campañas reales, valida con una campaña de importe mínimo y credenciales de desarrollo. Las integraciones pueden publicar en el relay, consumir OpenRouter y crear pagos NWC; controla sus fondos y límites.
+Before testing real campaigns, validate with a minimum-value campaign and development credentials. Integrations can publish to the relay, consume OpenRouter, and create NWC payments; control their balances and limits.
 
-## Producción
+## Production
 
-Los Dockerfiles construyen por defecto las imágenes de producción: backend compilado y frontend servido por nginx. Railway usa esas imágenes, no el target de desarrollo de Compose. Sigue [la guía de Railway](DEPLOY_RAILWAY.md) y crea secretos exclusivos de producción.
+Dockerfiles build production images by default: a compiled backend and an nginx-served frontend. Railway uses those images, not Compose's development target. Follow the [Railway guide](DEPLOY_RAILWAY.md) and create production-only secrets.

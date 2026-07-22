@@ -1,56 +1,56 @@
-# Despliegue en Railway
+# Railway Deployment
 
-Esta aplicación se publica con cuatro servicios: `api`, `frontend`, PostgreSQL y Redis.
-No subas nunca `backend/.env` ni pegues claves reales en GitHub, tickets o capturas.
+This application is deployed as four services: `api`, `frontend`, PostgreSQL, and Redis.
+Never commit `backend/.env` or paste real secrets into GitHub, tickets, or screenshots.
 
-## 1. Preparar las claves
+## 1. Prepare secrets
 
-Antes de publicar, revoca las credenciales Nostr y NWC utilizadas durante el desarrollo y crea otras para producción con un saldo inicial limitado. Genera también una nueva clave AES de 32 bytes (64 caracteres hexadecimales) y un `JWT_SECRET` largo y aleatorio. Copia únicamente valores nuevos al panel de Railway.
+Before deploying, revoke the Nostr and NWC credentials used during development and create separate production credentials with a limited initial balance. Also generate a new 32-byte AES key (64 hexadecimal characters) and a long random `JWT_SECRET`. Copy only new values into the Railway dashboard.
 
-## 2. Crear los servicios
+## 2. Create services
 
-1. En Railway, crea un proyecto y conecta el repositorio GitHub.
-2. Añade los servicios **PostgreSQL** y **Redis** desde el botón **New**.
-3. Añade un servicio desde el mismo repositorio para la API. En sus ajustes establece `Root Directory` como `backend`; Railway detectará su `Dockerfile`.
-4. Añade otro servicio desde el mismo repositorio para el frontend, con `Root Directory` igual a `frontend`.
-5. Genera un dominio público para cada uno. Conserva el dominio de la API para el paso siguiente.
+1. In Railway, create a project and connect the GitHub repository.
+2. Add **PostgreSQL** and **Redis** services from the **New** button.
+3. Add a service from the same repository for the API. In its settings, set `Root Directory` to `backend`; Railway will detect its `Dockerfile`.
+4. Add another service from the same repository for the frontend, with `Root Directory` set to `frontend`.
+5. Generate a public domain for each service. Keep the API domain for the next step.
 
-## 3. Variables de la API
+## 3. API variables
 
-En el servicio `api`, añade estas variables. Las referencias se eligen desde **Add Variable Reference** para no copiar contraseñas:
+Add these variables to the `api` service. Choose references through **Add Variable Reference** to avoid copying passwords:
 
-| Variable | Valor |
+| Variable | Value |
 | --- | --- |
-| `DB_HOST` | referencia a `Postgres.PGHOST` |
-| `DB_PORT` | referencia a `Postgres.PGPORT` |
-| `DB_USERNAME` | referencia a `Postgres.PGUSER` |
-| `DB_PASSWORD` | referencia a `Postgres.PGPASSWORD` |
-| `DB_NAME` | referencia a `Postgres.PGDATABASE` |
-| `REDIS_HOST` | referencia a `Redis.REDISHOST` |
-| `REDIS_PORT` | referencia a `Redis.REDISPORT` |
-| `REDIS_USERNAME` | referencia a `Redis.REDISUSER` |
-| `REDIS_PASSWORD` | referencia a `Redis.REDISPASSWORD` |
-| `JWT_SECRET` | nuevo secreto aleatorio largo |
-| `ENCRYPTION_KEY` | nueva clave AES hexadecimal de 64 caracteres |
-| `PLATFORM_NSEC`, `PLATFORM_NPUB`, `PLATFORM_NWC_URL` | nuevas credenciales de producción |
-| `NOSTR_RELAY_URL` | `wss://relay.damus.io` o el relay elegido |
-| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | clave y modelo de producción |
-| `FRONTEND_URL` | dominio HTTPS público del frontend, sin `/` final |
+| `DB_HOST` | reference to `Postgres.PGHOST` |
+| `DB_PORT` | reference to `Postgres.PGPORT` |
+| `DB_USERNAME` | reference to `Postgres.PGUSER` |
+| `DB_PASSWORD` | reference to `Postgres.PGPASSWORD` |
+| `DB_NAME` | reference to `Postgres.PGDATABASE` |
+| `REDIS_HOST` | reference to `Redis.REDISHOST` |
+| `REDIS_PORT` | reference to `Redis.REDISPORT` |
+| `REDIS_USERNAME` | reference to `Redis.REDISUSER` |
+| `REDIS_PASSWORD` | reference to `Redis.REDISPASSWORD` |
+| `JWT_SECRET` | new long random secret |
+| `ENCRYPTION_KEY` | new 64-character hexadecimal AES key |
+| `PLATFORM_NSEC`, `PLATFORM_NPUB`, `PLATFORM_NWC_URL` | new production credentials |
+| `NOSTR_RELAY_URL` | `wss://relay.damus.io` or the chosen relay |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` | production API key and model |
+| `FRONTEND_URL` | public HTTPS frontend domain, without a trailing `/` |
 
-Railway proporciona `PORT` automáticamente. La API ejecuta migraciones al arrancar.
+Railway provides `PORT` automatically. The API runs migrations at startup.
 
-## 4. Variable y despliegue del frontend
+## 4. Frontend variable and deployment
 
-En `frontend` configura la variable `VITE_API_URL` con el dominio HTTPS de la API, sin `/` final, y vuelve a desplegar. El contenedor la escribe al arrancar, de modo que no depende de que Railway la inyecte durante la compilación. Para el contenedor nginx configura `PORT=8080` si Railway lo solicita.
+In `frontend`, set `VITE_API_URL` to the API HTTPS domain, without a trailing `/`, then redeploy. The container writes it at startup, so it does not depend on Railway injecting it during the build. Set `PORT=8080` for the nginx container if Railway requires it.
 
-Cada cambio de `VITE_API_URL` requiere redeplegar el frontend para reiniciar su contenedor.
+Every `VITE_API_URL` change requires redeploying the frontend to restart its container.
 
-## 5. Comprobación antes de difundir el enlace
+## 5. Check before sharing the link
 
-1. Abre el dominio del frontend desde un teléfono por datos móviles.
-2. Registra una cuenta, inicia sesión y crea una campaña de importe muy bajo.
-3. Confirma en los logs de `api` que las migraciones, Redis y Nostr se conectaron sin errores.
-4. Realiza un único pago controlado y confirma el registro de impacto y pago en la interfaz.
-5. Reinicia solamente la API desde Railway y verifica que las campañas siguen existiendo.
+1. Open the frontend domain from a phone using mobile data.
+2. Register an account, sign in, and create a very-low-value campaign.
+3. Confirm in the `api` logs that migrations, Redis, and Nostr connected without errors.
+4. Make one controlled payment and confirm the impact and payment records in the interface.
+5. Restart only the API in Railway and verify that campaigns persist.
 
-Configura un límite de gasto en Railway y otro en OpenRouter antes de compartir el enlace públicamente.
+Set a spending limit in Railway and another in OpenRouter before sharing the public link.
