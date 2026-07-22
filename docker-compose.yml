@@ -1,54 +1,68 @@
 services:
-  # 1. Servicio de la API (NestJS)
+  # Entorno de desarrollo: código montado y recarga automática.
   api:
     build:
-      context: ./backend        # <-- CAMBIADO: Ahora apunta a la subcarpeta backend
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: nest_api
+      target: development
     ports:
       - "3000:3000"
     volumes:
-      - ./backend:/usr/src/app  # <-- CAMBIADO: Mapea la subcarpeta backend
+      - ./backend:/usr/src/app
       - /usr/src/app/node_modules
     env_file:
-      - ./backend/.env         # <-- CAMBIADO: Tu .env ahora vive dentro de backend
+      - ./backend/.env
+    environment:
+      DB_HOST: postgres_db
+      REDIS_HOST: redis_cache
+      FRONTEND_URL: http://localhost:5173
     depends_on:
-      - postgres_db
-      - redis_cache
+      postgres_db:
+        condition: service_healthy
+      redis_cache:
+        condition: service_healthy
 
-  # 2. Servicio del Frontend (NUEVO)
   frontend:
     build:
-      context: ./frontend       # <-- Apunta a la subcarpeta frontend
+      context: ./frontend
       dockerfile: Dockerfile
-    container_name: frontend_app
+      target: development
     ports:
-      - "5173:5173"             # <-- Cambia si tu frontend usa el 3000
+      - "5173:5173"
     volumes:
-      - ./frontend:/usr/src/app # <-- Mapea la subcarpeta frontend
+      - ./frontend:/usr/src/app
       - /usr/src/app/node_modules
+    environment:
+      VITE_API_URL: http://localhost:3000
     depends_on:
-      - api                     # Espera a que la API intente levantar primero
+      api:
+        condition: service_started
 
-  # 3. Servicio de la Base de Datos (PostgreSQL)
   postgres_db:
     image: postgres:16-alpine
-    container_name: postgres_db
     ports:
       - "5432:5432"
     env_file:
-      - ./backend/.env         # <-- IMPORTANTE: Añadido para que lea las variables de la base de datos desde el .env del backend
+      - ./backend/.env
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # 4. Servicio de Caché / Mensajería (Redis)
   redis_cache:
     image: redis:7-alpine
-    container_name: redis_cache
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:
