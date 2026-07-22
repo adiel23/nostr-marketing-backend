@@ -7,22 +7,35 @@ import {
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { Repository } from 'typeorm';
+import { In } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  Campaign,
-  CampaignStatus,
-} from './entities/campaign.entity';
+import { Campaign, CampaignStatus } from './entities/campaign.entity';
 import { NWCClient } from '@getalby/sdk';
 import { CryptoService } from 'src/crypto/crypto.service';
 import { Impact } from 'src/impacts/entities/impact.entity';
-import { calculatePlatformFee } from 'src/common/fees.util';
+import {
+  calculatePlatformFeeMsats,
+  calculateRequiredImpactBalanceMsats,
+  satsToMsats,
+} from 'src/common/fees.util';
+import {
+  ImpactPayment,
+  ImpactPaymentType,
+} from 'src/impacts/entities/impact-payment.entity';
+import { PaymentProgressStatus } from 'src/impacts/entities/impact.entity';
 
 interface ImpactTotals {
   impactsCount: number;
-  totalZapSats: number;
-  totalLightningFeeSats: number;
-  totalPlatformFeeSats: number;
-  totalSpentSats: number;
+  totalZapAmountMsats: string;
+  totalZapRoutingFeeMsats: string;
+  totalPlatformFeeAmountMsats: string;
+  totalPlatformRoutingFeeMsats: string;
+  totalSpentMsats: string;
+}
+
+interface ImpactTotalsRow extends Omit<ImpactTotals, 'impactsCount'> {
+  campaignId: string;
+  impactsCount: number | string;
 }
 
 @Injectable()
@@ -32,6 +45,8 @@ export class CampaignsService {
     private campaignsRepository: Repository<Campaign>,
     @InjectRepository(Impact)
     private impactsRepository: Repository<Impact>,
+    @InjectRepository(ImpactPayment)
+    private paymentsRepository: Repository<ImpactPayment>,
     private readonly cryptoService: CryptoService,
   ) {}
 
@@ -50,13 +65,15 @@ export class CampaignsService {
     }
 
     try {
-      const platformFeeRate = calculatePlatformFee(
+      const zapAmountMsats = satsToMsats(satsPerImpact);
+      const platformFeeMsats = calculatePlatformFeeMsats(
         satsPerImpact,
         createCampaignDto.commentMode,
       );
-
-      const minimumRequired =
-        satsPerImpact + 0.003 * satsPerImpact + platformFeeRate * satsPerImpact;
+      const minimumRequired = calculateRequiredImpactBalanceMsats(
+        zapAmountMsats,
+        platformFeeMsats,
+      );
 
       await this.validateWalletBalance(nwcUrl, minimumRequired);
 
@@ -101,7 +118,7 @@ export class CampaignsService {
           createdAt: 'DESC',
         },
       });
-    } catch (error) {
+    } catch {
       throw new InternalServerErrorException(
         'Error al obtener las campañas activas.',
       );
@@ -140,19 +157,49 @@ export class CampaignsService {
       where: { campaignId: campaign.id },
       order: { createdAt: 'DESC' },
     });
+    const payments = impacts.length
+      ? await this.paymentsRepository.find({
+          where: { impactId: In(impacts.map((impact) => impact.id)) },
+        })
+      : [];
+    const paymentsByImpact = new Map<string, ImpactPayment[]>();
+    for (const payment of payments) {
+      const current = paymentsByImpact.get(payment.impactId) ?? [];
+      current.push(payment);
+      paymentsByImpact.set(payment.impactId, current);
+    }
 
     return {
-      ...this.toCampaignSummary(campaign, this.calculateTotals(impacts)),
-      impacts: impacts.map((impact) => this.toPublicImpact(impact)),
+      ...this.toCampaignSummary(
+        campaign,
+        this.calculateTotals(impacts, payments),
+      ),
+      impacts: impacts.map((impact) =>
+        this.toPublicImpact(impact, paymentsByImpact.get(impact.id) ?? []),
+      ),
     };
   }
 
   update(id: number, updateCampaignDto: UpdateCampaignDto) {
+    void updateCampaignDto;
     return `This action updates a #${id} campaign`;
   }
 
   remove(id: number) {
     return `This action removes a #${id} campaign`;
+  }
+
+  async markBillingBlocked(id: string): Promise<void> {
+    await this.campaignsRepository.update(id, {
+      status: CampaignStatus.BILLING_BLOCKED,
+    });
+  }
+
+  async restoreAfterBilling(id: string): Promise<void> {
+    await this.campaignsRepository.update(
+      { id, status: CampaignStatus.BILLING_BLOCKED },
+      { status: CampaignStatus.ACTIVE },
+    );
   }
 
   private async getTotalsByCampaign(campaignIds: string[]) {
@@ -162,46 +209,79 @@ export class CampaignsService {
     const rows = await this.impactsRepository
       .createQueryBuilder('impact')
       .select('impact.campaignId', 'campaignId')
-      .addSelect('COUNT(impact.id)', 'impactsCount')
-      .addSelect('COALESCE(SUM(impact.zapSats), 0)', 'totalZapSats')
+      .leftJoin(ImpactPayment, 'payment', 'payment.impact_id = impact.id')
+      .addSelect('COUNT(DISTINCT impact.id)', 'impactsCount')
       .addSelect(
-        'COALESCE(SUM(impact.lightningFeeSats), 0)',
-        'totalLightningFeeSats',
+        `COALESCE(SUM(CASE WHEN payment.type = 'zap' AND payment.status = 'paid' THEN payment.amount_msats ELSE 0 END), 0)`,
+        'totalZapAmountMsats',
       )
-      .addSelect('COALESCE(SUM(impact.platformFee), 0)', 'totalPlatformFeeSats')
-      .addSelect('COALESCE(SUM(impact.totalSpentSats), 0)', 'totalSpentSats')
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN payment.type = 'zap' AND payment.status = 'paid' THEN payment.routing_fee_msats ELSE 0 END), 0)`,
+        'totalZapRoutingFeeMsats',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN payment.type = 'platform_fee' AND payment.status = 'paid' THEN payment.amount_msats ELSE 0 END), 0)`,
+        'totalPlatformFeeAmountMsats',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN payment.type = 'platform_fee' AND payment.status = 'paid' THEN payment.routing_fee_msats ELSE 0 END), 0)`,
+        'totalPlatformRoutingFeeMsats',
+      )
+      .addSelect(
+        `COALESCE(SUM(CASE WHEN payment.status = 'paid' THEN payment.amount_msats + payment.routing_fee_msats ELSE 0 END), 0)`,
+        'totalSpentMsats',
+      )
       .where('impact.campaignId IN (:...campaignIds)', { campaignIds })
       .groupBy('impact.campaignId')
-      .getRawMany();
+      .getRawMany<ImpactTotalsRow>();
 
     for (const row of rows) {
       totalsByCampaign.set(row.campaignId, {
         impactsCount: Number(row.impactsCount),
-        totalZapSats: Number(row.totalZapSats),
-        totalLightningFeeSats: Number(row.totalLightningFeeSats),
-        totalPlatformFeeSats: Number(row.totalPlatformFeeSats),
-        totalSpentSats: Number(row.totalSpentSats),
+        totalZapAmountMsats: String(row.totalZapAmountMsats),
+        totalZapRoutingFeeMsats: String(row.totalZapRoutingFeeMsats),
+        totalPlatformFeeAmountMsats: String(row.totalPlatformFeeAmountMsats),
+        totalPlatformRoutingFeeMsats: String(row.totalPlatformRoutingFeeMsats),
+        totalSpentMsats: String(row.totalSpentMsats),
       });
     }
 
     return totalsByCampaign;
   }
 
-  private calculateTotals(impacts: Impact[]): ImpactTotals {
-    return impacts.reduce<ImpactTotals>(
-      (totals, impact) => ({
-        impactsCount: totals.impactsCount + 1,
-        totalZapSats: totals.totalZapSats + (impact.zapSats ?? 0),
-        totalLightningFeeSats:
-          totals.totalLightningFeeSats + (impact.lightningFeeSats ?? 0),
-        totalPlatformFeeSats:
-          totals.totalPlatformFeeSats + (impact.platformFee ?? 0),
-        totalSpentSats:
-          totals.totalSpentSats +
-          (impact.totalSpentSats ?? impact.satsCharged ?? 0),
-      }),
-      this.emptyTotals(),
-    );
+  private calculateTotals(
+    impacts: Impact[],
+    payments: ImpactPayment[],
+  ): ImpactTotals {
+    let zapAmount = 0n;
+    let zapRouting = 0n;
+    let platformAmount = 0n;
+    let platformRouting = 0n;
+    for (const payment of payments) {
+      if (payment.status !== PaymentProgressStatus.PAID) continue;
+      const amount = BigInt(payment.amountMsats);
+      const routing = BigInt(payment.routingFeeMsats);
+      if (payment.type === ImpactPaymentType.ZAP) {
+        zapAmount += amount;
+        zapRouting += routing;
+      } else {
+        platformAmount += amount;
+        platformRouting += routing;
+      }
+    }
+    return {
+      impactsCount: impacts.length,
+      totalZapAmountMsats: zapAmount.toString(),
+      totalZapRoutingFeeMsats: zapRouting.toString(),
+      totalPlatformFeeAmountMsats: platformAmount.toString(),
+      totalPlatformRoutingFeeMsats: platformRouting.toString(),
+      totalSpentMsats: (
+        zapAmount +
+        zapRouting +
+        platformAmount +
+        platformRouting
+      ).toString(),
+    };
   }
 
   private toCampaignSummary(campaign: Campaign, totals?: ImpactTotals) {
@@ -220,7 +300,25 @@ export class CampaignsService {
     };
   }
 
-  private toPublicImpact(impact: Impact) {
+  private toPublicImpact(impact: Impact, payments: ImpactPayment[]) {
+    const zap = payments.find(
+      (payment) => payment.type === ImpactPaymentType.ZAP,
+    );
+    const platform = payments.find(
+      (payment) => payment.type === ImpactPaymentType.PLATFORM_FEE,
+    );
+    const paidValue = (payment?: ImpactPayment) =>
+      payment?.status === PaymentProgressStatus.PAID
+        ? BigInt(payment.amountMsats)
+        : 0n;
+    const paidRouting = (payment?: ImpactPayment) =>
+      payment?.status === PaymentProgressStatus.PAID
+        ? BigInt(payment.routingFeeMsats)
+        : 0n;
+    const zapAmount = paidValue(zap);
+    const zapRouting = paidRouting(zap);
+    const platformAmount = paidValue(platform);
+    const platformRouting = paidRouting(platform);
     return {
       id: impact.id,
       campaignId: impact.campaignId,
@@ -231,10 +329,19 @@ export class CampaignsService {
       commentEventId: impact.commentEventId,
       foundKeywords: impact.foundKeywords ?? [],
       status: impact.status,
-      zapSats: impact.zapSats ?? 0,
-      lightningFeeSats: impact.lightningFeeSats ?? 0,
-      platformFee: impact.platformFee ?? 0,
-      totalSpentSats: impact.totalSpentSats ?? impact.satsCharged ?? 0,
+      commentStatus: impact.commentStatus,
+      platformFeeStatus: impact.platformFeeStatus,
+      zapStatus: impact.zapStatus,
+      zapAmountMsats: zapAmount.toString(),
+      zapRoutingFeeMsats: zapRouting.toString(),
+      platformFeeAmountMsats: platformAmount.toString(),
+      platformRoutingFeeMsats: platformRouting.toString(),
+      totalSpentMsats: (
+        zapAmount +
+        zapRouting +
+        platformAmount +
+        platformRouting
+      ).toString(),
       createdAt: impact.createdAt,
     };
   }
@@ -242,30 +349,39 @@ export class CampaignsService {
   private emptyTotals(): ImpactTotals {
     return {
       impactsCount: 0,
-      totalZapSats: 0,
-      totalLightningFeeSats: 0,
-      totalPlatformFeeSats: 0,
-      totalSpentSats: 0,
+      totalZapAmountMsats: '0',
+      totalZapRoutingFeeMsats: '0',
+      totalPlatformFeeAmountMsats: '0',
+      totalPlatformRoutingFeeMsats: '0',
+      totalSpentMsats: '0',
     };
   }
 
   private async validateWalletBalance(
     nwcUrl: string,
-    minimumRequired: number,
+    minimumRequired: bigint,
   ): Promise<void> {
     const client = new NWCClient({
       nostrWalletConnectUrl: nwcUrl,
     });
 
     try {
-      const response = await client.getBalance();
-      const walletBalanceSats = response.balance;
-
-      console.log("balance: " + walletBalanceSats + " sats");
-
-      if (walletBalanceSats < minimumRequired) {
+      const info = await client.getWalletServiceInfo();
+      const methods = new Set((info.capabilities ?? []).map(String));
+      const missing = ['get_balance', 'pay_invoice', 'lookup_invoice'].filter(
+        (method) => !methods.has(method),
+      );
+      if (missing.length > 0) {
         throw new BadRequestException(
-          `Saldo insuficiente en la wallet. Requieres al menos ${minimumRequired} sats.`,
+          `La conexión NWC no permite: ${missing.join(', ')}.`,
+        );
+      }
+      const response = await client.getBalance();
+      const walletBalanceMsats = BigInt(response.balance);
+
+      if (walletBalanceMsats < minimumRequired) {
+        throw new BadRequestException(
+          `Saldo insuficiente en la wallet. Requieres al menos ${minimumRequired.toString()} msats.`,
         );
       }
     } catch (error) {

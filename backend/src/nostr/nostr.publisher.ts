@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { finalizeEvent } from 'nostr-tools/pure';
+import { finalizeEvent, type Event } from 'nostr-tools/pure';
 import { SimplePool } from 'nostr-tools/pool';
 import { getPlatformSecretKey, getRelayUrl } from './nostr-keys.util';
 
@@ -17,10 +17,10 @@ export interface PublishCommentResult {
 export class NostrPublisher {
   private readonly logger = new Logger(NostrPublisher.name);
 
-  async publishComment(input: PublishCommentInput): Promise<PublishCommentResult> {
+  prepareComment(input: PublishCommentInput): Event {
     const relayUrl = getRelayUrl();
     const secretKey = getPlatformSecretKey();
-    const signedEvent = finalizeEvent(
+    return finalizeEvent(
       {
         kind: 1,
         created_at: Math.floor(Date.now() / 1000),
@@ -33,14 +33,26 @@ export class NostrPublisher {
       },
       secretKey,
     );
+  }
+
+  async publishPreparedComment(
+    signedEvent: Event,
+  ): Promise<PublishCommentResult> {
+    const relayUrl = getRelayUrl();
 
     const pool = new SimplePool();
     try {
-      await pool.publish([relayUrl], signedEvent);
+      await Promise.all(pool.publish([relayUrl], signedEvent));
       this.logger.log(`Comentario promocional publicado: ${signedEvent.id}`);
       return { eventId: signedEvent.id };
     } finally {
       pool.close([relayUrl]);
     }
+  }
+
+  async publishComment(
+    input: PublishCommentInput,
+  ): Promise<PublishCommentResult> {
+    return this.publishPreparedComment(this.prepareComment(input));
   }
 }

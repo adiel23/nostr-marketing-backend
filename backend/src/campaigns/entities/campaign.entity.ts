@@ -11,6 +11,7 @@ import {
 export enum CampaignStatus {
   ACTIVE = 'active',
   PAUSED = 'paused',
+  BILLING_BLOCKED = 'billing_blocked',
   CANCELLED = 'cancelled',
   COMPLETED = 'completed',
 }

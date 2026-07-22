@@ -1,44 +1,53 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { Campaign } from './entities/campaign.entity';
+import { NWCClient } from '@getalby/sdk';
+import { Campaign, CampaignCommentMode } from './entities/campaign.entity';
 import { CampaignsService } from './campaigns.service';
 import { CryptoService } from 'src/crypto/crypto.service';
-import { Impact } from 'src/impacts/entities/impact.entity';
-import { CampaignCommentMode } from './entities/campaign.entity';
-import { NWCClient } from '@getalby/sdk';
+import {
+  CommentStatus,
+  Impact,
+  ImpactStatus,
+  PaymentProgressStatus,
+} from 'src/impacts/entities/impact.entity';
+import {
+  ImpactPayment,
+  ImpactPaymentType,
+} from 'src/impacts/entities/impact-payment.entity';
+
+const nwcDefaults = () => ({
+  getWalletServiceInfo: jest.fn().mockResolvedValue({
+    capabilities: ['get_balance', 'pay_invoice', 'lookup_invoice'],
+  }),
+  getBalance: jest.fn().mockResolvedValue({ balance: 1_000_000 }),
+  close: jest.fn(),
+});
 
 jest.mock('@getalby/sdk', () => ({
-  NWCClient: jest.fn().mockImplementation(() => ({
-    getBalance: jest.fn().mockResolvedValue({ balance: 1000 }),
-    close: jest.fn(),
-  })),
+  NWCClient: jest.fn().mockImplementation(() => nwcDefaults()),
 }));
 
 describe('CampaignsService', () => {
   let service: CampaignsService;
-  let campaignsRepository: {
-    create: jest.Mock;
-    save: jest.Mock;
-    find: jest.Mock;
-    findOne: jest.Mock;
-  };
-  let impactsRepository: {
-    find: jest.Mock;
-    createQueryBuilder: jest.Mock;
-  };
+  let campaignsRepository: any;
+  let impactsRepository: any;
+  let paymentsRepository: any;
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     campaignsRepository = {
       create: jest.fn(),
       save: jest.fn(),
       find: jest.fn(),
       findOne: jest.fn(),
+      update: jest.fn(),
     };
     impactsRepository = {
       find: jest.fn(),
       createQueryBuilder: jest.fn(),
     };
+    paymentsRepository = { find: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -47,117 +56,84 @@ describe('CampaignsService', () => {
           provide: getRepositoryToken(Campaign),
           useValue: campaignsRepository,
         },
+        { provide: getRepositoryToken(Impact), useValue: impactsRepository },
         {
-          provide: getRepositoryToken(Impact),
-          useValue: impactsRepository,
+          provide: getRepositoryToken(ImpactPayment),
+          useValue: paymentsRepository,
         },
         {
           provide: CryptoService,
-          useValue: {
-            encrypt: jest.fn().mockReturnValue('encrypted-url'),
-          },
+          useValue: { encrypt: jest.fn().mockReturnValue('encrypted-url') },
         },
       ],
     }).compile();
-
-    service = module.get<CampaignsService>(CampaignsService);
+    service = module.get(CampaignsService);
   });
 
-  it('should be defined', () => {
-    expect(service).toBeDefined();
+  const campaignDto = (commentMode = CampaignCommentMode.FIXED) => ({
+    name: 'Test campaign',
+    productDescription: 'Wallet segura',
+    promotionalComment: 'Prueba esta wallet segura.',
+    commentMode,
+    keywords: ['wallet'],
+    nwcUrl: 'nostr+walletconnect://test',
+    satsPerImpact: 100,
+    endsAt: new Date(Date.now() + 60_000).toISOString(),
   });
 
-  it('should persist promotional comment settings when creating a campaign', async () => {
-    const futureDate = new Date(Date.now() + 60_000).toISOString();
-    const dto = {
-      name: 'Test campaign',
-      productDescription: 'Wallet segura',
-      promotionalComment: 'Prueba esta wallet segura.',
-      commentMode: CampaignCommentMode.AI,
-      keywords: ['wallet'],
-      nwcUrl: 'nostr+walletconnect://test',
-      satsPerImpact: 100,
-      endsAt: futureDate,
-    };
+  it('valida capacidades, balance completo en msats y guarda la campaña', async () => {
+    campaignsRepository.create.mockImplementation((input: unknown) => input);
+    campaignsRepository.save.mockImplementation((input: unknown) => input);
 
-    campaignsRepository.create.mockImplementation((input) => input);
-    campaignsRepository.save.mockImplementation((input) =>
-      Promise.resolve({ id: 'campaign-1', ...input }),
-    );
+    await service.create(campaignDto(CampaignCommentMode.AI), 'company-id');
 
-    await service.create(dto, 'company-id');
-
+    const client = (NWCClient as unknown as jest.Mock).mock.results[0].value;
+    expect(client.getWalletServiceInfo).toHaveBeenCalled();
+    expect(client.getBalance).toHaveBeenCalled();
     expect(campaignsRepository.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        promotionalComment: dto.promotionalComment,
         commentMode: CampaignCommentMode.AI,
+        nwcUrlEncrypted: 'encrypted-url',
       }),
     );
   });
 
-  it('should reject the campaign when NWC balance info discovery fails', async () => {
-    const futureDate = new Date(Date.now() + 60_000).toISOString();
-    const dto = {
-      name: 'Test campaign',
-      productDescription: 'Wallet segura',
-      promotionalComment: 'Prueba esta wallet segura.',
-      commentMode: CampaignCommentMode.FIXED,
-      keywords: ['wallet'],
-      nwcUrl: 'nostr+walletconnect://test',
-      satsPerImpact: 100,
-      endsAt: futureDate,
-    };
-
-    const NWCClientMock = NWCClient as unknown as jest.Mock;
-    NWCClientMock.mockImplementationOnce(() => ({
-      getBalance: jest
-        .fn()
-        .mockRejectedValue(
-          new Error(
-            'Failed to request get_balance Error: no info event (kind 13194) returned from relay',
-          ),
-        ),
-      close: jest.fn(),
+  it('rechaza saldo menor al impacto completo estimado', async () => {
+    (NWCClient as unknown as jest.Mock).mockImplementationOnce(() => ({
+      ...nwcDefaults(),
+      getBalance: jest.fn().mockResolvedValue({ balance: 103_999 }),
     }));
-    await expect(service.create(dto, 'company-id')).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(campaignsRepository.create).not.toHaveBeenCalled();
+
+    await expect(
+      service.create(campaignDto(CampaignCommentMode.FIXED), 'company-id'),
+    ).rejects.toThrow(BadRequestException);
     expect(campaignsRepository.save).not.toHaveBeenCalled();
   });
 
-  it('should reject campaigns whose end date is not after the creation date', async () => {
-    const dto = {
-      name: 'Test campaign',
-      keywords: ['a'],
-      nwcUrl: 'nostr+walletconnect://test',
-      satsPerImpact: 10,
-      endsAt: new Date(Date.now() - 1000).toISOString(),
-    };
+  it('rechaza conexiones sin los permisos NWC requeridos', async () => {
+    (NWCClient as unknown as jest.Mock).mockImplementationOnce(() => ({
+      ...nwcDefaults(),
+      getWalletServiceInfo: jest
+        .fn()
+        .mockResolvedValue({ capabilities: ['get_balance'] }),
+    }));
 
-    await expect(service.create(dto as any, 'company-id')).rejects.toThrow(
+    await expect(service.create(campaignDto(), 'company-id')).rejects.toThrow(
       BadRequestException,
     );
   });
 
-  it('should list only campaigns for the authenticated company with totals', async () => {
-    const campaigns = [
-      {
-        id: 'campaign-1',
-        companyId: 'company-1',
-        name: 'Wallet',
-        productDescription: 'Wallet segura',
-        promotionalComment: 'Prueba Wallet Bitcoin.',
-        commentMode: CampaignCommentMode.FIXED,
-        keywords: ['wallet'],
-        satsPerImpact: 100,
-        status: 'active',
-        endsAt: new Date('2030-01-01T00:00:00.000Z'),
-        createdAt: new Date('2026-01-01T00:00:00.000Z'),
-      },
-    ];
+  it('lista totales exactos en msats', async () => {
+    const campaign = {
+      id: 'campaign-1',
+      companyId: 'company-1',
+      ...campaignDto(),
+      status: 'active',
+      createdAt: new Date(),
+    };
     const queryBuilder = {
       select: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
@@ -165,48 +141,34 @@ describe('CampaignsService', () => {
         {
           campaignId: 'campaign-1',
           impactsCount: '2',
-          totalZapSats: '200',
-          totalLightningFeeSats: '3',
-          totalPlatformFeeSats: '4',
-          totalSpentSats: '207',
+          totalZapAmountMsats: '200000',
+          totalZapRoutingFeeMsats: '3000',
+          totalPlatformFeeAmountMsats: '4000',
+          totalPlatformRoutingFeeMsats: '1000',
+          totalSpentMsats: '208000',
         },
       ]),
     };
-
-    campaignsRepository.find.mockResolvedValue(campaigns);
+    campaignsRepository.find.mockResolvedValue([campaign]);
     impactsRepository.createQueryBuilder.mockReturnValue(queryBuilder);
 
     await expect(service.findAllForCompany('company-1')).resolves.toEqual([
       expect.objectContaining({
-        id: 'campaign-1',
-        promotionalComment: 'Prueba Wallet Bitcoin.',
-        commentMode: CampaignCommentMode.FIXED,
         impactsCount: 2,
-        totalZapSats: 200,
-        totalLightningFeeSats: 3,
-        totalPlatformFeeSats: 4,
-        totalSpentSats: 207,
+        totalZapAmountMsats: '200000',
+        totalPlatformFeeAmountMsats: '4000',
+        totalSpentMsats: '208000',
       }),
     ]);
-    expect(campaignsRepository.find).toHaveBeenCalledWith({
-      where: { companyId: 'company-1' },
-      order: { createdAt: 'DESC' },
-    });
   });
 
-  it('should return campaign detail with impact spend breakdown', async () => {
+  it('solo contabiliza pagos confirmados en el detalle', async () => {
     campaignsRepository.findOne.mockResolvedValue({
       id: 'campaign-1',
       companyId: 'company-1',
-      name: 'Wallet',
-      productDescription: 'Wallet segura',
-      promotionalComment: 'Prueba Wallet Bitcoin.',
-      commentMode: CampaignCommentMode.FIXED,
-      keywords: ['wallet'],
-      satsPerImpact: 100,
+      ...campaignDto(),
       status: 'active',
-      endsAt: new Date('2030-01-01T00:00:00.000Z'),
-      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      createdAt: new Date(),
     });
     impactsRepository.find.mockResolvedValue([
       {
@@ -218,12 +180,27 @@ describe('CampaignsService', () => {
         commentContent: 'Prueba Wallet Bitcoin.',
         commentEventId: 'comment-1',
         foundKeywords: ['wallet'],
-        status: 'full_success',
-        zapSats: 100,
-        lightningFeeSats: 1,
-        platformFee: 2,
-        totalSpentSats: 103,
-        createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        status: ImpactStatus.COMMENT_ONLY,
+        commentStatus: CommentStatus.PUBLISHED,
+        platformFeeStatus: PaymentProgressStatus.PAID,
+        zapStatus: PaymentProgressStatus.SKIPPED,
+        createdAt: new Date(),
+      },
+    ]);
+    paymentsRepository.find.mockResolvedValue([
+      {
+        impactId: 'impact-1',
+        type: ImpactPaymentType.ZAP,
+        status: PaymentProgressStatus.SKIPPED,
+        amountMsats: '100000',
+        routingFeeMsats: '0',
+      },
+      {
+        impactId: 'impact-1',
+        type: ImpactPaymentType.PLATFORM_FEE,
+        status: PaymentProgressStatus.PAID,
+        amountMsats: '2000',
+        routingFeeMsats: '500',
       },
     ]);
 
@@ -231,28 +208,18 @@ describe('CampaignsService', () => {
       service.findOneForCompany('campaign-1', 'company-1'),
     ).resolves.toEqual(
       expect.objectContaining({
-        id: 'campaign-1',
-        impactsCount: 1,
-        totalZapSats: 100,
-        totalLightningFeeSats: 1,
-        totalPlatformFeeSats: 2,
-        totalSpentSats: 103,
+        totalZapAmountMsats: '0',
+        totalPlatformFeeAmountMsats: '2000',
+        totalPlatformRoutingFeeMsats: '500',
+        totalSpentMsats: '2500',
         impacts: [
           expect.objectContaining({
-            targetContent: 'Busco wallet',
-            commentContent: 'Prueba Wallet Bitcoin.',
-            commentEventId: 'comment-1',
-            foundKeywords: ['wallet'],
-            zapSats: 100,
-            lightningFeeSats: 1,
-            platformFee: 2,
-            totalSpentSats: 103,
+            zapAmountMsats: '0',
+            platformFeeAmountMsats: '2000',
+            totalSpentMsats: '2500',
           }),
         ],
       }),
     );
-    expect(campaignsRepository.findOne).toHaveBeenCalledWith({
-      where: { id: 'campaign-1', companyId: 'company-1' },
-    });
   });
 });

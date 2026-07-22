@@ -7,11 +7,33 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
+import type { Event } from 'nostr-tools/pure';
 
 export enum ImpactStatus {
+  PROCESSING = 'processing',
+  FEE_PENDING = 'fee_pending',
+  FUNDS_INSUFFICIENT = 'funds_insufficient',
+  FAILED_BEFORE_COMMENT = 'failed_before_comment',
   FULL_SUCCESS = 'full_success',
   COMMENT_ONLY = 'comment_only',
+}
+
+export enum CommentStatus {
+  PENDING = 'pending',
+  PREPARED = 'prepared',
+  PUBLISHED = 'published',
+  FAILED = 'failed',
+}
+
+export enum PaymentProgressStatus {
+  PENDING = 'pending',
+  PAID = 'paid',
+  RETRYING = 'retrying',
+  SKIPPED = 'skipped',
+  FAILED = 'failed',
+  LEGACY_UNCOLLECTED = 'legacy_uncollected',
 }
 
 @Entity({ name: 'impacts' })
@@ -42,6 +64,9 @@ export class Impact {
   @Column({ name: 'comment_event_id', type: 'varchar', nullable: true })
   commentEventId!: string | null;
 
+  @Column({ name: 'signed_comment', type: 'jsonb', nullable: true })
+  signedComment!: Event | null;
+
   @Column({ name: 'found_keywords', type: 'text', array: true, default: '{}' })
   foundKeywords!: string[];
 
@@ -51,21 +76,30 @@ export class Impact {
   })
   status!: ImpactStatus;
 
-  @Column({ name: 'sats_charged', type: 'integer' })
-  satsCharged!: number;
+  @Column({
+    name: 'comment_status',
+    type: 'varchar',
+    default: CommentStatus.PENDING,
+  })
+  commentStatus!: CommentStatus;
 
-  @Column({ name: 'zap_sats', type: 'integer', default: 0 })
-  zapSats!: number;
+  @Column({
+    name: 'platform_fee_status',
+    type: 'varchar',
+    default: PaymentProgressStatus.PENDING,
+  })
+  platformFeeStatus!: PaymentProgressStatus;
 
-  @Column({ name: 'lightning_fee_sats', type: 'integer', default: 0 })
-  lightningFeeSats!: number;
-
-  @Column({ name: 'platform_fee', type: 'integer' })
-  platformFee!: number;
-
-  @Column({ name: 'total_spent_sats', type: 'integer', default: 0 })
-  totalSpentSats!: number;
+  @Column({
+    name: 'zap_status',
+    type: 'varchar',
+    default: PaymentProgressStatus.PENDING,
+  })
+  zapStatus!: PaymentProgressStatus;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt!: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
+  updatedAt!: Date;
 }
