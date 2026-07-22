@@ -470,7 +470,7 @@ function CampaignList({
                     {campaign.impactsCount}
                   </td>
                   <td className="px-5 py-4 font-medium text-slate-950">
-                    {formatSats(campaign.totalSpentSats)}
+                    {formatMsatsAsSats(campaign.totalSpentMsats)}
                   </td>
                   <td className="px-5 py-4 text-slate-600">
                     {formatDate(campaign.endsAt)}
@@ -534,19 +534,26 @@ function CampaignDetail({ campaign, loading }) {
         </div>
       </div>
 
-      <div className="grid gap-3 border-b border-slate-200 p-5 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Zap enviado" value={formatSats(campaign.totalZapSats)} />
+      <div className="grid gap-3 border-b border-slate-200 p-5 sm:grid-cols-2 xl:grid-cols-5">
         <Metric
-          label="Fee Lightning"
-          value={formatSats(campaign.totalLightningFeeSats)}
+          label="Zap enviado"
+          value={formatMsatsAsSats(campaign.totalZapAmountMsats)}
+        />
+        <Metric
+          label="Routing del Zap"
+          value={formatMsatsAsSats(campaign.totalZapRoutingFeeMsats)}
         />
         <Metric
           label="Fee plataforma"
-          value={formatSats(campaign.totalPlatformFeeSats)}
+          value={formatMsatsAsSats(campaign.totalPlatformFeeAmountMsats)}
+        />
+        <Metric
+          label="Routing del fee"
+          value={formatMsatsAsSats(campaign.totalPlatformRoutingFeeMsats)}
         />
         <Metric
           label="Total gastado"
-          value={formatSats(campaign.totalSpentSats)}
+          value={formatMsatsAsSats(campaign.totalSpentMsats)}
         />
       </div>
 
@@ -559,8 +566,9 @@ function CampaignDetail({ campaign, loading }) {
               <th className="px-5 py-3 font-semibold">Comentario</th>
               <th className="px-5 py-3 font-semibold">Keywords</th>
               <th className="px-5 py-3 font-semibold">Zap</th>
-              <th className="px-5 py-3 font-semibold">Fee LN</th>
+              <th className="px-5 py-3 font-semibold">Routing Zap</th>
               <th className="px-5 py-3 font-semibold">Fee plataforma</th>
+              <th className="px-5 py-3 font-semibold">Routing fee</th>
               <th className="px-5 py-3 font-semibold">Total</th>
               <th className="px-5 py-3 font-semibold">Estado</th>
             </tr>
@@ -570,7 +578,7 @@ function CampaignDetail({ campaign, loading }) {
               <tr>
                 <td
                   className="px-5 py-8 text-center text-slate-500"
-                  colSpan="9"
+                  colSpan="10"
                 >
                   Esta campaña todavía no tiene impactos.
                 </td>
@@ -614,21 +622,28 @@ function CampaignDetail({ campaign, loading }) {
                     </div>
                   </td>
                   <td className="px-5 py-4 text-slate-700">
-                    {formatSats(impact.zapSats)}
+                    {formatMsatsAsSats(impact.zapAmountMsats)}
                   </td>
                   <td className="px-5 py-4 text-slate-700">
-                    {formatSats(impact.lightningFeeSats)}
+                    {formatMsatsAsSats(impact.zapRoutingFeeMsats)}
                   </td>
                   <td className="px-5 py-4 text-slate-700">
-                    {formatSats(impact.platformFee)}
+                    {formatMsatsAsSats(impact.platformFeeAmountMsats)}
+                  </td>
+                  <td className="px-5 py-4 text-slate-700">
+                    {formatMsatsAsSats(impact.platformRoutingFeeMsats)}
                   </td>
                   <td className="px-5 py-4 font-medium text-slate-950">
-                    {formatSats(impact.totalSpentSats)}
+                    {formatMsatsAsSats(impact.totalSpentMsats)}
                   </td>
                   <td className="px-5 py-4">
                     <StatusBadge status={impact.status} />
                     <div className="mt-1 text-xs text-slate-400">
                       {formatDate(impact.createdAt)}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      Fee: {formatStatus(impact.platformFeeStatus)} · Zap:{' '}
+                      {formatStatus(impact.zapStatus)}
                     </div>
                   </td>
                 </tr>
@@ -643,17 +658,29 @@ function CampaignDetail({ campaign, loading }) {
 
 function Metrics({ totals }) {
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
       <Metric label="Campañas activas" value={totals.activeCampaigns} />
       <Metric label="Impactos" value={totals.impactsCount} />
-      <Metric label="Zap enviado" value={formatSats(totals.totalZapSats)} />
       <Metric
-        label="Fees"
-        value={formatSats(
-          totals.totalLightningFeeSats + totals.totalPlatformFeeSats,
-        )}
+        label="Zap enviado"
+        value={formatMsatsAsSats(totals.totalZapAmountMsats)}
       />
-      <Metric label="Total gastado" value={formatSats(totals.totalSpentSats)} />
+      <Metric
+        label="Routing Zap"
+        value={formatMsatsAsSats(totals.totalZapRoutingFeeMsats)}
+      />
+      <Metric
+        label="Fee plataforma"
+        value={formatMsatsAsSats(totals.totalPlatformFeeAmountMsats)}
+      />
+      <Metric
+        label="Routing fee"
+        value={formatMsatsAsSats(totals.totalPlatformRoutingFeeMsats)}
+      />
+      <Metric
+        label="Total gastado"
+        value={formatMsatsAsSats(totals.totalSpentMsats)}
+      />
     </section>
   )
 }
@@ -739,6 +766,11 @@ function StatusBadge({ status }) {
     cancelled: 'bg-red-100 text-red-800',
     full_success: 'bg-emerald-100 text-emerald-800',
     comment_only: 'bg-amber-100 text-amber-800',
+    processing: 'bg-blue-100 text-blue-800',
+    fee_pending: 'bg-orange-100 text-orange-800',
+    funds_insufficient: 'bg-red-100 text-red-800',
+    failed_before_comment: 'bg-red-100 text-red-800',
+    billing_blocked: 'bg-orange-100 text-orange-800',
   }
 
   return (
@@ -765,20 +797,35 @@ function summarizeCampaigns(campaigns) {
       activeCampaigns:
         totals.activeCampaigns + (campaign.status === 'active' ? 1 : 0),
       impactsCount: totals.impactsCount + (campaign.impactsCount ?? 0),
-      totalZapSats: totals.totalZapSats + (campaign.totalZapSats ?? 0),
-      totalLightningFeeSats:
-        totals.totalLightningFeeSats + (campaign.totalLightningFeeSats ?? 0),
-      totalPlatformFeeSats:
-        totals.totalPlatformFeeSats + (campaign.totalPlatformFeeSats ?? 0),
-      totalSpentSats: totals.totalSpentSats + (campaign.totalSpentSats ?? 0),
+      totalZapAmountMsats: addMsats(
+        totals.totalZapAmountMsats,
+        campaign.totalZapAmountMsats,
+      ),
+      totalZapRoutingFeeMsats: addMsats(
+        totals.totalZapRoutingFeeMsats,
+        campaign.totalZapRoutingFeeMsats,
+      ),
+      totalPlatformFeeAmountMsats: addMsats(
+        totals.totalPlatformFeeAmountMsats,
+        campaign.totalPlatformFeeAmountMsats,
+      ),
+      totalPlatformRoutingFeeMsats: addMsats(
+        totals.totalPlatformRoutingFeeMsats,
+        campaign.totalPlatformRoutingFeeMsats,
+      ),
+      totalSpentMsats: addMsats(
+        totals.totalSpentMsats,
+        campaign.totalSpentMsats,
+      ),
     }),
     {
       activeCampaigns: 0,
       impactsCount: 0,
-      totalZapSats: 0,
-      totalLightningFeeSats: 0,
-      totalPlatformFeeSats: 0,
-      totalSpentSats: 0,
+      totalZapAmountMsats: '0',
+      totalZapRoutingFeeMsats: '0',
+      totalPlatformFeeAmountMsats: '0',
+      totalPlatformRoutingFeeMsats: '0',
+      totalSpentMsats: '0',
     },
   )
 }
@@ -788,8 +835,19 @@ function extractError(payload, fallback) {
   return payload.message ?? fallback ?? 'Ocurrió un error'
 }
 
-function formatSats(value) {
-  return `${Number(value ?? 0).toLocaleString()} sats`
+function addMsats(left, right) {
+  return (BigInt(left ?? 0) + BigInt(right ?? 0)).toString()
+}
+
+function formatMsatsAsSats(value) {
+  const msats = BigInt(value ?? 0)
+  const sign = msats < 0n ? '-' : ''
+  const absolute = msats < 0n ? -msats : msats
+  const whole = absolute / 1000n
+  const fraction = (absolute % 1000n).toString().padStart(3, '0')
+  const trimmedFraction = fraction.replace(/0+$/, '')
+  const formattedWhole = whole.toLocaleString('es-SV')
+  return `${sign}${formattedWhole}${trimmedFraction ? `.${trimmedFraction}` : ''} sats`
 }
 
 function formatDate(value) {
