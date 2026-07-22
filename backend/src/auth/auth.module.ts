@@ -5,13 +5,14 @@ import { CompaniesModule } from 'src/companies/companies.module';
 import {PassportModule} from "@nestjs/passport";
 import {JwtModule} from "@nestjs/jwt";
 import { JwtStrategy } from './jwt.strategy';
+import { requiredEnv } from 'src/common/env.util';
 
 @Module({
   imports: [
     CompaniesModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
-      secret: 'MI_CLAVE_SECRETA_SUPER_SEGURA', // Cambiar por variable de entorno
+      secret: requiredEnv('JWT_SECRET'),
       signOptions: { expiresIn: '1h' }, // El token expira en 1 hora
     })
   ],

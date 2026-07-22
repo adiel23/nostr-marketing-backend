@@ -15,6 +15,11 @@ async function bootstrap() {
     forbidNonWhitelisted: true, // Lanza un error si hay propiedades no definidas en el DTO
     transform: true, // Transforma los payloads a instancias de clases
   }));
-  await app.listen(process.env.PORT ?? 3000);
+  if (process.env.NODE_ENV === 'production') {
+    app.use('/queues', (_request, response) => {
+      response.status(404).send();
+    });
+  }
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 bootstrap();

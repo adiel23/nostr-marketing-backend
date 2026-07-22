@@ -15,6 +15,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { LlmModule } from './llm/llm.module';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
+import { envPort, requiredEnv } from './common/env.util';
 
 @Module({
   imports: [
@@ -28,11 +29,11 @@ import { ExpressAdapter } from '@bull-board/express';
     }),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: 'postgres_db',
-      port: 5432,
-      username: 'root',
-      password: '1234',
-      database: 'nostr_marketing',
+      host: requiredEnv('DB_HOST'),
+      port: envPort('DB_PORT', 5432),
+      username: requiredEnv('DB_USERNAME'),
+      password: requiredEnv('DB_PASSWORD'),
+      database: requiredEnv('DB_NAME'),
       entities: [Company, Campaign, Impact, ImpactPayment],
       synchronize: false,
       migrations: [__dirname + '/migrations/*{.ts,.js}'], // 2. Dónde buscará Nest las migraciones al arrancar

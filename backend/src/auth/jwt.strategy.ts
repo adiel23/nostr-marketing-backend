@@ -2,6 +2,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { requiredEnv } from 'src/common/env.util';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -10,7 +11,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       // Extrae el token del header como 'Authorization: Bearer <token>'
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false, // Rechaza el token si ya expiró
-      secretOrKey: 'MI_CLAVE_SECRETA_SUPER_SEGURA', // Debe ser la misma clave del módulo
+      secretOrKey: requiredEnv('JWT_SECRET'),
     });
   }
 

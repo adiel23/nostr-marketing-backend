@@ -10,6 +10,7 @@ import { NostrPublisher } from './nostr.publisher';
 import { ImpactExecutionService } from './impact-execution.service';
 import { ImpactsModule } from 'src/impacts/impacts.module';
 import { WalletModule } from 'src/wallet/wallet.module';
+import { envPort, requiredEnv } from 'src/common/env.util';
 
 @Module({
     imports: [
@@ -19,8 +20,8 @@ import { WalletModule } from 'src/wallet/wallet.module';
         forwardRef(() => WalletModule),
         BullModule.forRoot({
         connection: {
-            host: 'redis_cache',
-            port: 6379,
+            host: requiredEnv('REDIS_HOST'),
+            port: envPort('REDIS_PORT', 6379),
         },
         }),
         BullModule.registerQueue({
