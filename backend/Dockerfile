@@ -1,20 +1,15 @@
-# 1. Actualizamos a la versión LTS más reciente (Node.js 24)
-FROM node:24-alpine
-
-# Carpeta de trabajo dentro del contenedor
+FROM node:24-alpine AS build
 WORKDIR /usr/src/app
-
-# Copiamos archivos de configuración de dependencias
 COPY package*.json ./
-
-# Instalamos las dependencias del proyecto
-RUN npm install
-
-# Copiamos el resto del código fuente
+RUN npm ci
 COPY . .
+RUN npm run build && npm prune --omit=dev
 
-# Exponemos el puerto de NestJS
+FROM node:24-alpine
+WORKDIR /usr/src/app
+ENV NODE_ENV=production
+COPY --from=build /usr/src/app/package*.json ./
+COPY --from=build /usr/src/app/node_modules ./node_modules
+COPY --from=build /usr/src/app/dist ./dist
 EXPOSE 3000
-
-# Comando para ejecutar NestJS en modo desarrollo
-CMD ["npm", "run", "start:dev"]
+CMD ["node", "dist/main"]
