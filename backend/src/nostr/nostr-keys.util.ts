@@ -1,4 +1,3 @@
-import { hexToBytes } from '@noble/hashes/utils';
 import { decode } from 'nostr-tools/nip19';
 
 export function getPlatformSecretKey(): Uint8Array {
@@ -52,4 +51,14 @@ export function getPlatformPublicKey(): string {
 
 export function getRelayUrl(): string {
   return process.env.NOSTR_RELAY_URL ?? 'wss://relay.damus.io';
+}
+
+function hexToBytes(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length / 2);
+
+  for (let index = 0; index < value.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(value.slice(index, index + 2), 16);
+  }
+
+  return bytes;
 }
