@@ -14,13 +14,16 @@ import {
   PaymentProgressStatus,
 } from 'src/impacts/entities/impact.entity';
 import { ImpactsService } from 'src/impacts/impacts.service';
-import { CampaignCommentMode } from 'src/campaigns/entities/campaign.entity';
+import {
+  CampaignCommentMode,
+  CampaignStatus,
+} from 'src/campaigns/entities/campaign.entity';
 import { LlmService } from 'src/llm/llm.service';
 import { ImpactPaymentType } from 'src/impacts/entities/impact-payment.entity';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
 export interface ImpactExecutionResult {
-  status: ImpactStatus;
+  status: ImpactStatus | 'skipped_campaign_inactive';
   impactId: string;
   commentEventId: string | null;
   zapSent: boolean;
@@ -57,7 +60,7 @@ export class ImpactExecutionService {
         });
       } catch (error) {
         this.logger.warn(
-          `Fee ${impact.id} aún pendiente: ${error instanceof Error ? error.message : String(error)}`,
+          `Fee pendiente para la campaña "${campaign.name}": ${error instanceof Error ? error.message : String(error)}`,
         );
       }
     }
@@ -73,6 +76,22 @@ export class ImpactExecutionService {
       );
     }
 
+    // Los impactos pendientes de facturación deben poder recuperarse aunque la
+    // campaña esté bloqueada. Las campañas pausadas o finalizadas no ejecutan
+    // ningún efecto externo.
+    if (
+      ![CampaignStatus.ACTIVE, CampaignStatus.BILLING_BLOCKED].includes(
+        campaign.status,
+      )
+    ) {
+      return {
+        status: 'skipped_campaign_inactive',
+        impactId: '',
+        commentEventId: null,
+        zapSent: false,
+      };
+    }
+
     const impact = await this.impactsService.findOrCreateProcessing({
       campaignId: campaign.id,
       targetPubkey: jobData.pubkey,
@@ -86,6 +105,34 @@ export class ImpactExecutionService {
     }
 
     const zapAmountMsats = satsToMsats(campaign.satsPerImpact);
+
+    // El saldo se comprueba antes de generar, firmar o guardar el comentario.
+    // El fee depende del modo de la campaña, no del texto generado.
+    if (impact.commentStatus !== CommentStatus.PUBLISHED) {
+      const platformFeeMsats = calculatePlatformFeeMsats(
+        campaign.satsPerImpact,
+        campaign.commentMode,
+      );
+      const requiredMsats = calculateRequiredImpactBalanceMsats(
+        zapAmountMsats,
+        platformFeeMsats,
+      );
+      const balanceMsats = await this.walletService.getAdvertiserBalanceMsats(
+        campaign.nwcUrlEncrypted,
+      );
+
+      if (balanceMsats < requiredMsats) {
+        await this.impactsService.markFundsInsufficient(impact.id);
+        await this.campaignsService.pauseForInsufficientFunds(campaign.id);
+        return {
+          status: ImpactStatus.FUNDS_INSUFFICIENT,
+          impactId: impact.id,
+          commentEventId: null,
+          zapSent: false,
+        };
+      }
+    }
+
     let platformPayment = await this.impactsService.getPayment(
       impact.id,
       ImpactPaymentType.PLATFORM_FEE,
@@ -93,11 +140,13 @@ export class ImpactExecutionService {
 
     if (!platformPayment || !impact.signedComment) {
       const comment = await this.resolvePromotionalComment(campaign, jobData);
+
       if (!platformPayment) {
         const platformFeeMsats = calculatePlatformFeeMsats(
           campaign.satsPerImpact,
           comment.modeUsed,
         );
+
         platformPayment = await this.impactsService.ensurePayment(
           impact.id,
           ImpactPaymentType.PLATFORM_FEE,
@@ -111,11 +160,13 @@ export class ImpactExecutionService {
           targetPubkey: jobData.pubkey,
           content: comment.content,
         });
+
         await this.impactsService.savePreparedComment(
           impact.id,
           comment.content,
           signedComment,
         );
+
         impact.signedComment = signedComment;
         impact.commentContent = comment.content;
         impact.commentEventId = signedComment.id;
@@ -145,23 +196,6 @@ export class ImpactExecutionService {
     }
 
     if (impact.commentStatus !== CommentStatus.PUBLISHED) {
-      const requiredMsats = calculateRequiredImpactBalanceMsats(
-        zapAmountMsats,
-        BigInt(platformPayment.amountMsats),
-      );
-      const balanceMsats = await this.walletService.getAdvertiserBalanceMsats(
-        campaign.nwcUrlEncrypted,
-      );
-      if (balanceMsats < requiredMsats) {
-        await this.impactsService.markFundsInsufficient(impact.id);
-        return {
-          status: ImpactStatus.FUNDS_INSUFFICIENT,
-          impactId: impact.id,
-          commentEventId: null,
-          zapSent: false,
-        };
-      }
-
       if (!impact.signedComment) {
         throw new Error('El comentario no fue preparado antes de publicarse.');
       }
@@ -337,6 +371,7 @@ export class ImpactExecutionService {
         modeUsed: CampaignCommentMode.FIXED,
       };
     }
+
     const generated = await this.llmService.generatePromotionalComment({
       postContent: jobData.content,
       campaignName: campaign.name,
@@ -344,6 +379,7 @@ export class ImpactExecutionService {
       promotionalComment: campaign.promotionalComment,
       foundKeywords: jobData.foundKeywords,
     });
+
     if (!generated?.content) {
       return {
         content: campaign.promotionalComment,

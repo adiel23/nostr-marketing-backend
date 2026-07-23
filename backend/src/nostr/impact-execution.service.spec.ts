@@ -27,6 +27,7 @@ describe('ImpactExecutionService', () => {
   const campaignsService = {
     findById: jest.fn(),
     markBillingBlocked: jest.fn(),
+    pauseForInsufficientFunds: jest.fn(),
     restoreAfterBilling: jest.fn(),
   };
   const impactsService = {
@@ -203,6 +204,13 @@ describe('ImpactExecutionService', () => {
     expect(impactsService.markFundsInsufficient).toHaveBeenCalledWith(
       'impact-1',
     );
+    expect(campaignsService.pauseForInsufficientFunds).toHaveBeenCalledWith(
+      'campaign-1',
+    );
+    expect(llmService.generatePromotionalComment).not.toHaveBeenCalled();
+    expect(nostrPublisher.prepareComment).not.toHaveBeenCalled();
+    expect(impactsService.savePreparedComment).not.toHaveBeenCalled();
+    expect(walletService.createPlatformFeeInvoice).not.toHaveBeenCalled();
     expect(nostrPublisher.publishPreparedComment).not.toHaveBeenCalled();
     expect(walletService.payAdvertiserInvoice).not.toHaveBeenCalled();
   });
@@ -283,7 +291,25 @@ describe('ImpactExecutionService', () => {
     );
   });
 
+  it('no genera el comentario IA cuando no hay saldo suficiente', async () => {
+    campaignsService.findById.mockResolvedValue({
+      ...campaign,
+      commentMode: CampaignCommentMode.AI,
+    });
+    walletService.getAdvertiserBalanceMsats.mockResolvedValue(104_999n);
+
+    const result = await service.executeApprovedImpact(jobData);
+
+    expect(result.status).toBe(ImpactStatus.FUNDS_INSUFFICIENT);
+    expect(llmService.generatePromotionalComment).not.toHaveBeenCalled();
+    expect(nostrPublisher.prepareComment).not.toHaveBeenCalled();
+  });
+
   it('continúa un fee pendiente sin volver a publicar el comentario', async () => {
+    campaignsService.findById.mockResolvedValue({
+      ...campaign,
+      status: CampaignStatus.BILLING_BLOCKED,
+    });
     impactsService.findOrCreateProcessing.mockResolvedValue({
       ...draftImpact,
       status: ImpactStatus.FEE_PENDING,
@@ -312,5 +338,18 @@ describe('ImpactExecutionService', () => {
     await expect(service.executeApprovedImpact(jobData)).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('no procesa campañas pausadas', async () => {
+    campaignsService.findById.mockResolvedValue({
+      ...campaign,
+      status: CampaignStatus.PAUSED,
+    });
+
+    const result = await service.executeApprovedImpact(jobData);
+
+    expect(result.status).toBe('skipped_campaign_inactive');
+    expect(impactsService.findOrCreateProcessing).not.toHaveBeenCalled();
+    expect(walletService.getAdvertiserBalanceMsats).not.toHaveBeenCalled();
   });
 });

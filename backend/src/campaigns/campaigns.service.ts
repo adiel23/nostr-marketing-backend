@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -40,6 +41,8 @@ interface ImpactTotalsRow extends Omit<ImpactTotals, 'impactsCount'> {
 
 @Injectable()
 export class CampaignsService {
+  private readonly logger = new Logger(CampaignsService.name);
+
   constructor(
     @InjectRepository(Campaign)
     private campaignsRepository: Repository<Campaign>,
@@ -97,6 +100,9 @@ export class CampaignsService {
       return await this.campaignsRepository.save(newCampaign);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      this.logger.warn(
+        `No se pudo validar la conexión NWC al crear la campaña: ${this.sanitizeNwcError(error)}`,
+      );
       if (this.isNwcInfoDiscoveryError(error)) {
         throw new BadRequestException(
           'No se pudo validar el balance de la wallet NWC porque el relay no devolvió el evento info kind 13194.',
@@ -193,6 +199,13 @@ export class CampaignsService {
     await this.campaignsRepository.update(id, {
       status: CampaignStatus.BILLING_BLOCKED,
     });
+  }
+
+  async pauseForInsufficientFunds(id: string): Promise<void> {
+    await this.campaignsRepository.update(
+      { id, status: CampaignStatus.ACTIVE },
+      { status: CampaignStatus.PAUSED },
+    );
   }
 
   async restoreAfterBilling(id: string): Promise<void> {
@@ -399,5 +412,15 @@ export class CampaignsService {
       message.includes('kind 13194') ||
       message.includes('Failed to request get_balance')
     );
+  }
+
+  private sanitizeNwcError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message
+      .replace(
+        /(?:nostr\+walletconnect|nwc):\/\/[^\s'"]+/gi,
+        '[NWC_URL_REDACTED]',
+      )
+      .replace(/([?&]secret=)[^&\s'"]+/gi, '$1[REDACTED]');
   }
 }
