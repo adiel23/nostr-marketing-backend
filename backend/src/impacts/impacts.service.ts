@@ -145,7 +145,9 @@ export class ImpactsService {
     amountMsats: string,
   ): Promise<ImpactPayment> {
     const existing = await this.getPayment(impactId, type);
+
     if (existing) return existing;
+    
     try {
       return await this.paymentsRepository.save(
         this.paymentsRepository.create({

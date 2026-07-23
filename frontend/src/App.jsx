@@ -601,12 +601,18 @@ function CampaignDetail({ campaign, loading }) {
                     </div>
                   </td>
                   <td className="px-5 py-4">
-                    <div className="max-w-md text-slate-700">
-                      {impact.commentContent || 'No disponible'}
-                    </div>
-                    <div className="mt-1 font-mono text-xs text-slate-400">
-                      {shorten(impact.commentEventId)}
-                    </div>
+                    {impact.commentStatus === 'published' ? (
+                      <>
+                        <div className="max-w-md text-slate-700">
+                          {impact.commentContent || 'No disponible'}
+                        </div>
+                        <div className="mt-1 font-mono text-xs text-slate-400">
+                          {shorten(impact.commentEventId)}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="text-slate-400">No publicado</span>
+                    )}
                   </td>
                   <td className="px-5 py-4">
                     <div className="flex min-w-40 flex-wrap gap-1.5">
